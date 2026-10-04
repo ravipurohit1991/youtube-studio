@@ -133,7 +133,7 @@ export default function App(): ReactNode {
     const off = window.api.onJobProgress((payload) => {
       setJobs((prev) => {
         const next = prev.filter((job) => job.id !== payload.full.id)
-        next.push(payload.full)
+        if (!payload.removed) next.push(payload.full)
         return next.sort((a, b) => b.createdAt - a.createdAt)
       })
       if (payload.job.status === 'completed') setLibraryStale(true)

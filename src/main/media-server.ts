@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import type { StreamSession, StreamTrack } from '@shared/types'
 import { log, logError } from './logger'
 import { settings } from './settings'
-import { mimeForExt } from './ytdlp'
+import { mimeForExt, type Upstream } from './ytdlp'
 import { refreshUrls, type ResolvedStream } from './stream'
 
 const UA =
@@ -18,7 +18,7 @@ const IMAGE_HOSTS = ['ytimg.com', 'ggpht.com', 'googleusercontent.com', 'youtube
 interface Entry {
   id: string
   resolved: ResolvedStream
-  upstream: { v: string | null; a: string | null }
+  upstream: { v: Upstream | null; a: Upstream | null }
   createdAt: number
 }
 
@@ -26,6 +26,21 @@ const entries = new Map<string, Entry>()
 let server: Server | null = null
 let listenPort = 0
 const SESSION_TTL = 3 * 60 * 60 * 1000
+/**
+ * googlevideo throttles or rejects big open-ended reads of adaptive formats, which is why yt-dlp fetches
+ * them in 10 MB pieces. The browser asks for "bytes=N-"; we answer with one bounded piece (a normal 206)
+ * and the media element simply asks for the next one.
+ */
+const UPSTREAM_CHUNK = 10 * 1024 * 1024
+
+function boundedRange(header: string | undefined): string {
+  const match = header ? /^bytes=(\d*)-(\d*)$/.exec(header.trim()) : null
+  if (!match || match[1] === '') return header ? String(header) : 'bytes=0-' + (UPSTREAM_CHUNK - 1)
+  const start = parseInt(match[1], 10)
+  const cap = start + UPSTREAM_CHUNK - 1
+  const end = match[2] === '' ? cap : Math.min(parseInt(match[2], 10), cap)
+  return 'bytes=' + start + '-' + end
+}
 
 function base64url(input: string): string {
   return Buffer.from(input, 'utf8').toString('base64url')
@@ -145,30 +160,34 @@ async function proxyUpstream(req: IncomingMessage, res: ServerResponse, entry: E
     return
   }
   const fallbackMime = track === 'v' ? mimeForExt(entry.resolved.videoExt) : mimeForExt(entry.resolved.audioExt)
-  const attempt = async function (url: string): Promise<Response> {
+  const attempt = async function (target: Upstream): Promise<Response> {
     const headers: Record<string, string> = {
       'User-Agent': UA,
       Accept: '*/*',
       'Accept-Language': 'en-US,en;q=0.9',
       Referer: 'https://www.youtube.com/',
       Origin: 'https://www.youtube.com',
+      ...target.headers,
     }
-    if (req.headers.range) headers.Range = String(req.headers.range)
-    return fetch(url, { headers, method: req.method === 'HEAD' ? 'HEAD' : 'GET', redirect: 'follow' })
+    // Always send a bounded Range, even when the element sent none (we then reply 206, which media accepts).
+    headers.Range = boundedRange(req.headers.range ? String(req.headers.range) : undefined)
+    return fetch(target.url, { headers, method: req.method === 'HEAD' ? 'HEAD' : 'GET', redirect: 'follow' })
   }
 
   let upstream: Response
   try {
     upstream = await attempt(current)
     if (upstream.status === 403 || upstream.status === 410 || upstream.status === 404) {
-      log('stream.expired, refreshing', entry.id, track)
-      const urls = await refreshUrls(entry.resolved.pageUrl, entry.resolved.selector)
-      const freshVideo = urls[0]
-      const freshAudio = urls.length > 1 ? urls[1] : null
-      entry.upstream = { v: freshVideo ?? null, a: entry.resolved.separateAudio ? freshAudio : null }
-      const retryUrl = track === 'v' ? entry.upstream.v : entry.upstream.a
-      if (!retryUrl) throw new Error('stream refresh returned no URL')
-      upstream = await attempt(retryUrl)
+      log('stream.expired, refreshing', entry.id, track, upstream.status)
+      const fresh = await refreshUrls(entry.resolved.pageUrl, entry.resolved.selector)
+      if (entry.resolved.isAudioOnly) {
+        entry.upstream = { v: null, a: fresh[0] ?? null }
+      } else {
+        entry.upstream = { v: fresh[0] ?? null, a: entry.resolved.separateAudio ? fresh[1] ?? null : null }
+      }
+      const retry = track === 'v' ? entry.upstream.v : entry.upstream.a
+      if (!retry) throw new Error('stream refresh returned no URL')
+      upstream = await attempt(retry)
     }
   } catch (err) {
     logError('media.proxy', err)

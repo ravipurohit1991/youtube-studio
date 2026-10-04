@@ -11,10 +11,25 @@ import { ensureDir, jobsFile } from './paths'
 import { settings } from './settings'
 import { imageProxyUrl } from './media-server'
 import { ffmpegLocation } from './ffmpeg'
-import { baseArgs, buildFormatSelector, cleanError, resolveYtdlp } from './ytdlp'
+import { baseArgs, buildFormatSelector, cleanError, resolveYtdlp, ytdlpEnv } from './ytdlp'
 
 const PROGRESS_PREFIX = '@@P '
 const MAX_HISTORY = 300
+
+/** yt-dlp log prefixes for post-processing steps, and what to tell the user while they run. */
+const PROCESSING_STAGES: Array<[string, string]> = [
+  ['[Merger]', 'Merging video and audio'],
+  ['[ExtractAudio]', 'Converting audio'],
+  ['[VideoConvertor]', 'Converting video'],
+  ['[VideoRemuxer]', 'Remuxing video'],
+  ['[Fixup', 'Fixing up the file'],
+  ['[Metadata]', 'Writing metadata'],
+  ['[EmbedThumbnail]', 'Embedding thumbnail'],
+  ['[ThumbnailsConvertor]', 'Converting thumbnail'],
+  ['[SubtitlesConvertor]', 'Converting subtitles'],
+  ['[EmbedSubtitle]', 'Embedding subtitles'],
+  ['[MoveFiles]', 'Moving file into place'],
+]
 
 const MEDIA_EXT = ['.mp4', '.mkv', '.webm', '.mov', '.m4v', '.avi', '.flv', '.3gp', '.mp3', '.m4a', '.opus', '.ogg', '.oga', '.wav', '.flac', '.aac']
 
@@ -171,6 +186,7 @@ class DownloadManager {
       totalBytes: 0,
       outputPath: null,
       error: null,
+      stage: 'Waiting in queue',
       logTail: '',
       createdAt: nowMs(),
       startedAt: null,
@@ -191,7 +207,7 @@ class DownloadManager {
   private describeQuality(req: DownloadRequest): string {
     if (req.mode === 'audio_only') return ffmpegLocation() ? (req.audioFormat ?? settings.get('audioFormat')) + ' audio' : 'audio'
     const height = req.height ?? settings.get('preferredHeight')
-    return height && height > 0 ? 'video + audio · up to ' + height + 'p' : 'video + audio · best'
+    return height && height > 0 ? 'video + audio Â· up to ' + height + 'p' : 'video + audio Â· best'
   }
 
   cancel(id: string): void {
@@ -236,6 +252,7 @@ class DownloadManager {
     job.downloadedBytes = 0
     job.totalBytes = 0
     job.error = null
+    job.stage = 'Waiting in queue'
     job.outputPath = null
     job.logTail = ''
     job.startedAt = null
@@ -251,8 +268,9 @@ class DownloadManager {
     if (!job) return
     if (job.status === 'downloading' || job.status === 'processing') this.cancel(id)
     this.jobs.delete(id)
+    this.requests.delete(id)
     this.persist()
-    this.emit(job)
+    this.emit(job, true)
   }
 
   clearFinished(): void {
@@ -263,7 +281,8 @@ class DownloadManager {
     removable.forEach((id) => {
       const job = this.jobs.get(id)
       this.jobs.delete(id)
-      if (job) this.emit(job)
+      this.requests.delete(id)
+      if (job) this.emit(job, true)
     })
     this.persist()
   }
@@ -290,12 +309,13 @@ class DownloadManager {
     args.splice(args.length - 2, 0, '--print-to-file', 'after_move:%(filepath)s', this.pathFileFor(job))
     job.status = 'downloading'
     job.startedAt = nowMs()
+    job.stage = 'Contacting YouTube'
     this.emit(job)
     log('downloads.start', job.id, job.title)
     log('downloads.args', args.join(' '))
     let child: ChildProcess
     try {
-      child = spawn(bin.path, args, { windowsHide: true })
+      child = spawn(bin.path, args, { windowsHide: true, env: ytdlpEnv() })
     } catch (err) {
       logError('downloads.spawn', err)
       this.finish(job, 'error', { error: String(err) })
@@ -306,6 +326,7 @@ class DownloadManager {
     const pathFile = this.pathFileFor(job)
     let buffer = ''
     let lastEmit = 0
+    let streams = 0
     const handleLine = (line: string) => {
       const trimmed = line.trim()
       if (!trimmed) return
@@ -331,23 +352,38 @@ class DownloadManager {
         return
       }
       job.logTail = (job.logTail + trimmed + '\n').slice(-4000)
-      if (
-        trimmed.indexOf('[Merger]') >= 0 ||
-        trimmed.indexOf('[ExtractAudio]') >= 0 ||
-        trimmed.indexOf('[VideoConvertor]') >= 0 ||
-        trimmed.indexOf('[Fixup') >= 0 ||
-        trimmed.indexOf('[Metadata]') >= 0 ||
-        trimmed.indexOf('[EmbedThumbnail]') >= 0 ||
-        trimmed.indexOf('[SubtitlesConvertor]') >= 0
-      ) {
-        if (job.status !== 'processing') {
-          job.status = 'processing'
-          job.percent = Math.max(job.percent, 99)
-          this.emit(job)
-        }
+      const processing = PROCESSING_STAGES.find(function (pair) { return trimmed.indexOf(pair[0]) === 0 })
+      if (processing) {
+        const changed = job.status !== 'processing' || job.stage !== processing[1]
+        job.status = 'processing'
+        job.stage = processing[1]
+        job.percent = Math.max(job.percent, 99)
+        job.speed = null
+        job.eta = null
+        if (changed) this.emit(job)
+        return
       }
       if (trimmed.indexOf('[download] Destination:') === 0) {
+        streams += 1
         if (job.title === 'Pending...' || job.title === 'Queued link') job.title = cleanTitle(trimmed)
+        // A merged download fetches the silent video first, then the audio track; each runs 0-100%.
+        if (job.mode === 'audio_only') job.stage = 'Downloading audio'
+        else if (streams === 1) job.stage = 'Downloading video'
+        else job.stage = 'Downloading audio track (part ' + streams + ')'
+        job.percent = 0
+        job.downloadedBytes = 0
+        job.totalBytes = 0
+        this.emit(job)
+        return
+      }
+      let stage: string | null = null
+      if (/^\[youtube[^\]]*\].*(Downloading|Extracting)/.test(trimmed)) stage = 'Fetching video info'
+      else if (trimmed.indexOf('[info]') === 0 && trimmed.indexOf('Downloading') >= 0 && trimmed.indexOf('format') >= 0) stage = 'Starting download'
+      else if (/^\[(hlsnative|dashsegments)\]/.test(trimmed)) stage = 'Downloading stream fragments'
+      else if (trimmed.indexOf('has already been downloaded') >= 0) stage = 'Already downloaded'
+      if (stage && stage !== job.stage && job.status === 'downloading') {
+        job.stage = stage
+        this.emit(job)
       }
     }
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -449,6 +485,7 @@ class DownloadManager {
     job.finishedAt = nowMs()
     if (extra.error !== undefined) job.error = extra.error
     if (extra.outputPath !== undefined) job.outputPath = extra.outputPath
+    job.stage = status === 'completed' ? 'Saved' : status === 'canceled' ? 'Stopped' : status === 'error' ? 'Failed' : job.stage
     if (status === 'completed') {
       job.percent = 100
       job.speed = null
@@ -462,7 +499,7 @@ class DownloadManager {
     log('downloads.finish', job.id, status, job.outputPath ?? '')
   }
 
-  private emit(job: DownloadJob): void {
+  private emit(job: DownloadJob, removed = false): void {
     const payload: ProgressEvent = {
       id: job.id,
       status: job.status,
@@ -475,7 +512,7 @@ class DownloadManager {
       error: job.error,
       title: job.title,
     }
-    broadcast(IPC.jobsProgress, { job: payload, full: job })
+    broadcast(IPC.jobsProgress, { job: payload, full: job, removed })
   }
 
   private persist(): void {

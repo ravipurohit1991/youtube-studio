@@ -200,6 +200,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .progress > span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), #ff8a5c); transition: width 200ms ease; }
 .progress.done > span { background: var(--ok); }
 .progress.failed > span { background: var(--err); }
+.progress.busy > span {
+  width: 35% !important;
+  animation: progress-slide 1.1s ease-in-out infinite;
+  transition: none;
+}
+@keyframes progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(290%); }
+}
 
 .job {
   display: grid; grid-template-columns: 92px 1fr auto; gap: 14px; align-items: center;
@@ -209,6 +218,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .job + .job { margin-top: 9px; }
 .job-thumb { width: 92px; aspect-ratio: 16/9; border-radius: 6px; object-fit: cover; background: var(--bg-soft); }
 .job-title { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-stage { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); margin: -2px 0 6px; }
+.job-stage.processing { color: var(--accent); }
 .job-sub { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-faint); margin-top: 7px; }
 .job-actions { display: flex; gap: 6px; align-items: center; }
 
