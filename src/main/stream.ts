@@ -1,6 +1,6 @@
 import type { FormatInfo, PlaylistEntry, StreamRequest, VideoMeta } from '@shared/types'
 import { log } from './logger'
-import { directUrls, mimeForExt, pickBestAudio, pickBestVideo, pickMuxed, probe } from './ytdlp'
+import { directUrls, mimeForExt, pickBestAudio, pickBestVideo, pickMuxed, playable, probe, type Upstream } from './ytdlp'
 
 export interface ResolvedStream {
   meta: VideoMeta
@@ -12,8 +12,8 @@ export interface ResolvedStream {
   isAudioOnly: boolean
   separateAudio: boolean
   formatLabel: string
-  videoUpstream: string | null
-  audioUpstream: string | null
+  videoUpstream: Upstream | null
+  audioUpstream: Upstream | null
   videoExt: string
   audioExt: string
 }
@@ -40,7 +40,7 @@ export function clearProbeCache(): void {
 
 function streamableHeights(formats: FormatInfo[]): number[] {
   const heights = formats
-    .filter(function (f) { return f.kind !== 'audio' && f.height && f.ext !== 'm3u8' && f.ext !== 'mpd' })
+    .filter(function (f) { return f.kind !== 'audio' && !!f.height && playable(f) })
     .map(function (f) { return f.height as number })
   return Array.from(new Set(heights)).sort(function (a, b) { return b - a })
 }
@@ -53,8 +53,7 @@ function requireSingle(meta: VideoMeta): void {
 }
 
 function liveOnly(meta: VideoMeta): boolean {
-  const playable = meta.formats.filter(function (f) { return f.ext !== 'm3u8' && f.ext !== 'mpd' && f.ext !== 'mhtml' })
-  return meta.isLive && playable.length === 0
+  return meta.isLive && meta.formats.filter(playable).length === 0
 }
 
 export async function resolveStream(req: StreamRequest): Promise<ResolvedStream> {
@@ -156,7 +155,7 @@ export async function resolveStream(req: StreamRequest): Promise<ResolvedStream>
 }
 
 /** Re-resolve expired googlevideo URLs for an existing selection. */
-export async function refreshUrls(pageUrl: string, selector: string): Promise<string[]> {
+export async function refreshUrls(pageUrl: string, selector: string): Promise<Upstream[]> {
   log('stream.refresh', pageUrl, selector)
   return directUrls(pageUrl, selector)
 }

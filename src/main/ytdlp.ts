@@ -74,8 +74,13 @@ export async function ytdlpVersion(): Promise<string | null> {
   if (!bin.path) return null
   const res = await runYtdlp(['--version'], { timeoutMs: 20000 })
   if (!res.ok) return null
-  return res.stdout.trim().split(/\r?\n/)[0] || null
+  const version = res.stdout.trim().split(/\r?\n/)[0] || null
+  // --js-runtimes / --remote-components exist since 2025.11; an older custom copy would reject them.
+  knownOldYtdlp = !!version && /^\d{4}\./.test(version) && compareVersions(version, '2025.11.12') < 0
+  return version
 }
+
+let knownOldYtdlp = false
 
 export async function ytdlpStatus(): Promise<ToolStatus> {
   const bin = resolveYtdlp()
@@ -251,7 +256,7 @@ export function runYtdlp(args: string[], opts: RunOptions = {}): Promise<RunResu
     }
     let child: import('node:child_process').ChildProcess
     try {
-      child = spawn(bin.path, args, { windowsHide: true })
+      child = spawn(bin.path, args, { windowsHide: true, env: ytdlpEnv() })
     } catch (err) {
       logError('ytdlp.spawn', err)
       resolve({ ok: false, code: null, stdout: '', stderr: String(err) })
@@ -312,8 +317,24 @@ export function proxyArgs(): string[] {
   return proxy ? ['--proxy', proxy] : []
 }
 
+/**
+ * YouTube needs a JavaScript runtime to solve its player challenges. Without one yt-dlp falls back to a
+ * single limited client: many formats go missing and most of what is left is HLS, which a <video>
+ * element cannot play. Electron already contains Node, so point yt-dlp at our own executable and run
+ * it in plain-Node mode (ELECTRON_RUN_AS_NODE, see ytdlpEnv). No extra download needed.
+ */
+export function jsRuntimeArgs(): string[] {
+  if (knownOldYtdlp) return []
+  return ['--js-runtimes', 'node:' + process.execPath, '--remote-components', 'ejs:github']
+}
+
+/** Environment for every yt-dlp child: Node mode for the JS runtime above, UTF-8 output for titles. */
+export function ytdlpEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, ELECTRON_RUN_AS_NODE: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+}
+
 export function baseArgs(): string[] {
-  return ['--ignore-config', '--no-colors', ...cookieArgs(), ...proxyArgs()]
+  return ['--ignore-config', '--no-colors', ...jsRuntimeArgs(), ...cookieArgs(), ...proxyArgs()]
 }
 
 /** Run yt-dlp in JSON dump mode and parse the result. */
@@ -364,6 +385,7 @@ export function toFormatInfo(raw: Record<string, unknown>): FormatInfo | null {
   const tbr = num(raw.tbr)
   const filesize = num(raw.filesize) ?? num(raw.filesize_approx)
   const quality = str(raw.quality)
+  const protocol = str(raw.protocol)
   let label = ''
   if (hasVideo && height) {
     label = String(height) + 'p'
@@ -391,6 +413,7 @@ export function toFormatInfo(raw: Record<string, unknown>): FormatInfo | null {
     filesize,
     quality,
     note,
+    protocol,
   }
 }
 
@@ -412,8 +435,10 @@ export function audioScore(f: FormatInfo): number {
   return score
 }
 
-function playable(f: FormatInfo): boolean {
-  return f.formatId !== '' && f.ext !== 'm3u8' && f.ext !== 'mpd'
+/** Formats a <video>/<audio> element can read straight off the proxy: one plain HTTPS file. */
+export function playable(f: FormatInfo): boolean {
+  if (f.formatId === '' || f.ext === 'm3u8' || f.ext === 'mpd' || f.ext === 'mhtml') return false
+  return !f.protocol || f.protocol === 'https' || f.protocol === 'http'
 }
 
 export function pickBestVideo(formats: FormatInfo[], height: number | null): FormatInfo | null {
@@ -425,7 +450,7 @@ export function pickBestVideo(formats: FormatInfo[], height: number | null): For
 }
 
 export function pickBestAudio(formats: FormatInfo[]): FormatInfo | null {
-  const candidates = formats.filter(function (f) { return f.kind === 'audio' && f.ext !== 'mhtml' })
+  const candidates = formats.filter(function (f) { return f.kind === 'audio' && playable(f) })
   if (!candidates.length) return null
   return candidates.slice().sort(function (a, b) { return audioScore(b) - audioScore(a) })[0]
 }
@@ -545,13 +570,32 @@ function thumbOf(info: Record<string, unknown>): string | null {
   return str(last.url)
 }
 
-/** Ask yt-dlp for the direct media URL(s) for a selector. */
-export async function directUrls(pageUrl: string, selector: string): Promise<string[]> {
-  const args = [...baseArgs(), '--no-progress', '--no-warnings', '-f', selector, '-g', '--', pageUrl]
-  const res = await runYtdlp(args, { timeoutMs: 60000 })
-  const urls = res.stdout.split(/\r?\n/).map(function (l) { return l.trim() }).filter(function (l) { return l.indexOf('http') === 0 })
-  if (!urls.length) throw new Error(cleanError(res.stderr) || 'Could not resolve a playable stream URL')
-  return urls
+export interface Upstream {
+  url: string
+  /** Headers yt-dlp says this URL must be fetched with (User-Agent etc. of the client that produced it). */
+  headers: Record<string, string>
+}
+
+function toUpstream(raw: Record<string, unknown>): Upstream | null {
+  const url = str(raw.url)
+  if (!url) return null
+  const headers: Record<string, string> = {}
+  const given = raw.http_headers && typeof raw.http_headers === 'object' ? (raw.http_headers as Record<string, unknown>) : {}
+  Object.keys(given).forEach(function (key) {
+    const value = given[key]
+    if (typeof value === 'string') headers[key] = value
+  })
+  return { url, headers }
+}
+
+/** Ask yt-dlp for the direct media URL(s) (and their required headers) for a selector, video first. */
+export async function directUrls(pageUrl: string, selector: string): Promise<Upstream[]> {
+  const args = [...baseArgs(), '--no-progress', '--no-warnings', '--no-playlist', '-f', selector, '-j', '--', pageUrl]
+  const info = await runJson(args, 90000)
+  const requested = Array.isArray(info.requested_formats) ? (info.requested_formats as Record<string, unknown>[]) : []
+  const list = (requested.length ? requested : [info]).map(toUpstream).filter(function (u): u is Upstream { return !!u })
+  if (!list.length) throw new Error('Could not resolve a playable stream URL')
+  return list
 }
 
 export function mimeForExt(ext: string): string {

@@ -3,7 +3,9 @@ import { clampPercent } from '../lib/api'
 import type { JobStatus } from '@shared/types'
 
 export function ProgressBar({ value, status }: { value: number; status?: JobStatus }): ReactNode {
-  const cls = status === 'completed' ? 'progress done' : status === 'error' || status === 'canceled' ? 'progress failed' : 'progress'
+  // No byte counts yet (starting up, waiting in line) or post-processing: show motion instead of a frozen bar.
+  const busy = status === 'processing' || status === 'queued' || (status === 'downloading' && value <= 0)
+  const cls = status === 'completed' ? 'progress done' : status === 'error' || status === 'canceled' ? 'progress failed' : busy ? 'progress busy' : 'progress'
   return (
     <div className={cls}>
       <span style={{ width: clampPercent(value) + '%' }} />

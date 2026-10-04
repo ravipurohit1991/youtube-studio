@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">YTD Studio</string>
+    <string name="channel_downloads">Downloads</string>
+    <string name="channel_downloads_desc">Progress of running downloads</string>
+    <string name="channel_finished">Finished downloads</string>
+</resources>

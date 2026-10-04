@@ -121,7 +121,7 @@ export function ffmpegLocation(): string | null {
 
 /** bsdtar ships with Windows 10+ and reads zip archives; a GNU tar earlier on PATH (e.g. Git's) does not. */
 function tarExecutable(): string {
-  const system = join(process.env['SystemRoot'] || 'C:\Windows', 'System32', 'tar.exe')
+  const system = join(process.env['SystemRoot'] || 'C:\\Windows', 'System32', 'tar.exe')
   return existsSync(system) ? system : 'tar'
 }
 

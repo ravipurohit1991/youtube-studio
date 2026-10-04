@@ -11,13 +11,19 @@ const AUDIO_EXT = ['.mp3', '.m4a', '.opus', '.ogg', '.oga', '.wav', '.flac', '.a
 const IMAGE_EXT = ['.jpg', '.jpeg', '.png', '.webp']
 const SIDECAR_INFO = '.info.json'
 
-interface Group {
-  dir: string
-  base: string
-  media: string | null
+interface Sidecars {
   info: string | null
   image: string | null
   subs: string[]
+}
+
+/** yt-dlp's per-format pieces before merging: "Title [id].f137.mp4", "Title [id].f140-drc.m4a". */
+const FORMAT_PART = /(\])\.f[A-Za-z0-9_-]+$/
+
+/** Files yt-dlp/ffmpeg are still writing or left behind; never library items on their own. */
+function isWorkFile(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower.endsWith('.part') || lower.endsWith('.ytdl') || /\.part-frag\d+$/.test(lower) || /\.temp\.[a-z0-9]+$/.test(lower)
 }
 
 function walk(dir: string, depth: number, out: string[]): void {
@@ -86,79 +92,92 @@ export async function scanLibrary(): Promise<LibraryItem[]> {
   if (!existsSync(root)) return []
   const files: string[] = []
   walk(root, 3, files)
-  const groups = new Map<string, Group>()
-  const getGroup = function (dir: string, base: string): Group {
+  const sidecars = new Map<string, Sidecars>()
+  const sidecarFor = function (dir: string, base: string): Sidecars {
     const key = dir + '|' + base
-    const existing = groups.get(key)
-    if (existing) return existing
-    const created: Group = { dir, base, media: null, info: null, image: null, subs: [] }
-    groups.set(key, created)
-    return created
+    let found = sidecars.get(key)
+    if (!found) {
+      found = { info: null, image: null, subs: [] }
+      sidecars.set(key, found)
+    }
+    return found
   }
+  // Every media file is its own item (a video and an MP3 of the same title are two items);
+  // thumbnails/metadata/subtitles attach to all media sharing their base name.
+  const media: Array<{ full: string; dir: string; base: string; ext: string; kind: MediaKind }> = []
   files.forEach(function (full) {
     const dir = join(full, '..')
     const name = basename(full)
+    if (isWorkFile(name)) return
     const ext = extname(name).toLowerCase()
     if (ext === '.json') {
-      if (name.endsWith(SIDECAR_INFO)) {
-        const base = name.slice(0, name.length - SIDECAR_INFO.length)
-        getGroup(dir, base).info = full
-      }
+      if (name.endsWith(SIDECAR_INFO)) sidecarFor(dir, name.slice(0, name.length - SIDECAR_INFO.length)).info = full
       return
     }
     if (IMAGE_EXT.includes(ext)) {
-      const base = name.slice(0, name.length - ext.length)
-      const group = getGroup(dir, base)
-      if (!group.image) group.image = full
+      const side = sidecarFor(dir, name.slice(0, name.length - ext.length))
+      if (!side.image) side.image = full
       return
     }
     if (ext === '.vtt' || ext === '.srt' || ext === '.ass' || ext === '.lrc') {
-      const base = name.replace(/\.[A-Za-z-]{2,7}\.(vtt|srt|ass|lrc)$/i, '')
-      getGroup(dir, base).subs.push(full)
+      sidecarFor(dir, name.replace(/\.[A-Za-z-]{2,7}\.(vtt|srt|ass|lrc)$/i, '')).subs.push(full)
       return
     }
     const kind = kindFor(ext)
     if (!kind) return
-    const base = name.slice(0, name.length - ext.length)
-    getGroup(dir, base).media = full
+    media.push({ full, dir, base: name.slice(0, name.length - ext.length), ext, kind })
   })
 
+  // Separate video/audio pieces only matter when the merged file is missing (merge failed or still
+  // running). Then show one entry for them, the video piece, instead of one per format.
+  const finals = new Set(media.filter(function (m) { return !FORMAT_PART.test(m.base) }).map(function (m) { return m.dir + '|' + m.base }))
+  const orphanShown = new Set<string>()
+  const visible = media
+    .slice()
+    .sort(function (a, b) { return (a.kind === 'video' ? 0 : 1) - (b.kind === 'video' ? 0 : 1) })
+    .filter(function (m) {
+      if (!FORMAT_PART.test(m.base)) return true
+      const key = m.dir + '|' + m.base.replace(FORMAT_PART, '$1')
+      if (finals.has(key) || orphanShown.has(key)) return false
+      orphanShown.add(key)
+      return true
+    })
+
   const items: LibraryItem[] = []
-  groups.forEach(function (group) {
-    if (!group.media) return
-    const name = basename(group.media)
-    const ext = extname(name).toLowerCase().replace('.', '')
-    const kind = kindFor('.' + ext)
-    if (!kind) return
+  visible.forEach(function (m) {
+    const name = basename(m.full)
     let size = 0
     let mtime = 0
     try {
-      const st = statSync(group.media)
+      const st = statSync(m.full)
       size = st.size
       mtime = st.mtimeMs
     } catch {
       return
     }
-    const info = group.info ? readInfo(group.info) : null
+    const base = m.base.replace(FORMAT_PART, '$1')
+    const side = sidecars.get(m.dir + '|' + base) ?? { info: null, image: null, subs: [] }
+    const info = side.info ? readInfo(side.info) : null
     const videoId = info?.id ?? idFromFilename(name)
     const fallbackThumb = videoId ? 'https://i.ytimg.com/vi/' + videoId + '/hqdefault.jpg' : null
     const remoteThumb = info?.thumbnail ?? fallbackThumb
+    const partial = FORMAT_PART.test(m.base)
     items.push({
-      id: group.media,
+      id: m.full,
       name,
-      relPath: relative(root, group.media),
-      absPath: group.media,
-      ext,
-      kind,
+      relPath: relative(root, m.full),
+      absPath: m.full,
+      ext: m.ext.replace('.', ''),
+      kind: m.kind,
       size,
       mtime,
-      title: info?.title ?? titleFromFilename(name),
+      title: (info?.title ?? titleFromFilename(base + m.ext)) + (partial ? ' (incomplete: not merged)' : ''),
       uploader: info?.uploader ?? info?.channel ?? null,
       duration: typeof info?.duration === 'number' ? info.duration : null,
-      thumbnailUrl: group.image ? mediaUrlForPath(group.image) : imageProxyUrl(remoteThumb),
-      mediaUrl: mediaUrlForPath(group.media),
+      thumbnailUrl: side.image ? mediaUrlForPath(side.image) : imageProxyUrl(remoteThumb),
+      mediaUrl: mediaUrlForPath(m.full),
       videoId,
-      subtitleFiles: group.subs.map(function (s) { return basename(s) }),
+      subtitleFiles: side.subs.map(function (s) { return basename(s) }),
       isPlaylistPart: typeof info?.playlist_index === 'number' || !!info?.playlist_title,
     })
   })
@@ -181,15 +200,23 @@ export async function deleteLibraryItem(absPath: string): Promise<string[]> {
   } catch {
     siblings = []
   }
+  const stem = base.replace(FORMAT_PART, '$1')
+  const related = siblings.filter(function (candidate) { return candidate !== name && candidate.startsWith(stem + '.') })
+  // Another finished media file with the same name (e.g. the MP3 next to the MP4) keeps the shared sidecars.
+  const otherMedia = related.some(function (candidate) {
+    const candidateExt = extname(candidate).toLowerCase()
+    const candidateBase = candidate.slice(0, candidate.length - candidateExt.length)
+    return !!kindFor(candidateExt) && candidateBase === stem
+  })
   const targets = [absPath]
-  siblings.forEach(function (candidate) {
-    if (candidate === name) return
-    if (candidate.startsWith(base + '.')) {
-      if (candidate.endsWith(SIDECAR_INFO) || candidate.startsWith(base + '.') ) {
-        const full = join(dir, candidate)
-        if (!targets.includes(full)) targets.push(full)
-      }
-    }
+  related.forEach(function (candidate) {
+    const candidateExt = extname(candidate).toLowerCase()
+    const candidateBase = candidate.slice(0, candidate.length - candidateExt.length)
+    const isPiece = FORMAT_PART.test(candidateBase) || isWorkFile(candidate)
+    const isFinalMedia = !!kindFor(candidateExt) && !isPiece
+    if (isFinalMedia) return
+    if (otherMedia && !isPiece) return
+    targets.push(join(dir, candidate))
   })
   const trashed: string[] = []
   for (const target of targets) {

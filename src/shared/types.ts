@@ -23,6 +23,8 @@ export interface FormatInfo {
   filesize: number | null
   quality: string | null
   note: string | null
+  /** yt-dlp protocol: 'https' for plain files; 'm3u8_native' / 'http_dash_segments' cannot feed a <video> directly. */
+  protocol: string | null
 }
 
 export interface PlaylistEntry {
@@ -75,6 +77,8 @@ export interface DownloadJob {
   totalBytes: number
   outputPath: string | null
   error: string | null
+  /** Human readable step, e.g. "Downloading video stream", "Merging video and audio". */
+  stage: string | null
   logTail: string
   createdAt: number
   startedAt: number | null
@@ -221,6 +225,8 @@ export interface UpdateStatus {
 export interface JobProgressPayload {
   job: ProgressEvent
   full: DownloadJob
+  /** The job was deleted from the list; drop it instead of upserting. */
+  removed?: boolean
 }
 
 export interface ToolStatusBundle {

@@ -217,7 +217,7 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
     return jobs.filter((job) => job.status === 'completed' || job.status === 'error' || job.status === 'canceled')
   }, [jobs, queueFilter])
 
-  const activeCount = jobs.filter((job) => job.status === 'downloading' || job.status === 'processing').length
+  const queuedCount = jobs.filter((job) => job.status === 'downloading' || job.status === 'processing' || job.status === 'queued').length
   const finishedCount = jobs.filter((job) => job.status === 'completed' || job.status === 'error' || job.status === 'canceled').length
 
   return (
@@ -280,7 +280,7 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
                 <span>Paste</span>
               </button>
               <button type="button" className="btn primary" onClick={() => void analyze()} disabled={analyzing || !ytdlpReady}>
-                {analyzing ? <Loader2 size={15} /> : <Search size={15} />}
+                {analyzing ? <Loader2 size={15} className="spin" /> : <Search size={15} />}
                 <span>{analyzing ? 'Reading' : 'Analyze'}</span>
               </button>
             </div>
@@ -440,7 +440,7 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
         <div className="row" style={{ marginBottom: 14 }}>
           <div className="segmented">
             <button type="button" className={queueFilter === 'active' ? 'active' : ''} onClick={() => setQueueFilter('active')}>
-              Queue{activeCount ? ' · ' + activeCount : ''}
+              Queue{queuedCount ? ' · ' + queuedCount : ''}
             </button>
             <button type="button" className={queueFilter === 'history' ? 'active' : ''} onClick={() => setQueueFilter('history')}>
               History{finishedCount ? ' · ' + finishedCount : ''}
@@ -462,6 +462,12 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
                 {job.thumbnail ? <img className="job-thumb" src={job.thumbnail} alt="" /> : <div className="job-thumb" />}
                 <div style={{ minWidth: 0 }}>
                   <div className="job-title" title={job.title}>{job.title}</div>
+                  {job.stage && job.status !== 'error' ? (
+                    <div className={'job-stage' + (job.status === 'processing' ? ' processing' : '')}>
+                      {job.status === 'downloading' || job.status === 'processing' ? <Loader2 size={12} className="spin" /> : null}
+                      <span>{job.stage}</span>
+                    </div>
+                  ) : null}
                   {job.status === 'error' && job.error ? (
                     <div className="hint wrap-anywhere" style={{ color: 'var(--err)' }}>{job.error}</div>
                   ) : (
@@ -472,7 +478,8 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
                     <span>{job.status === 'completed' ? formatBytes(job.downloadedBytes || job.totalBytes) : formatBytes(job.downloadedBytes) + (job.totalBytes ? ' / ' + formatBytes(job.totalBytes) : '')}</span>
                     {job.speed ? <span>{job.speed}</span> : null}
                     {job.eta && job.status !== 'completed' ? <span>ETA {job.eta}</span> : null}
-                    <span>{Math.round(job.percent) + '%'}</span>
+                    {job.status === 'downloading' && job.percent > 0 ? <span>{Math.round(job.percent) + '%'}</span> : null}
+                    {job.status === 'completed' ? <span>100%</span> : null}
                     <span>{timeAgo(job.createdAt)}</span>
                     <span className={'chip ' + (job.status === 'completed' ? 'ok' : job.status === 'error' ? 'err' : job.status === 'canceled' ? 'warn' : '')}>{job.status}</span>
                   </div>

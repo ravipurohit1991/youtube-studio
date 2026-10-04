@@ -1,6 +1,7 @@
 # YTD Studio
 
-A lightweight Windows desktop app (Electron + TypeScript + React) for three jobs:
+A lightweight Windows desktop app (Electron + TypeScript + React), plus an [Android app](#android-app)
+with the same features, for three jobs:
 
 1. **Stream**: paste a YouTube link and watch it inside the app. No ads, no popups, and seeking works properly.
 2. **Download**: two modes only. The **whole video (with audio)** as MP4, or **audio only** (MP3/M4A/OPUS/WAV/FLAC). Playlists and batch links are supported, with a live queue.
@@ -9,6 +10,17 @@ A lightweight Windows desktop app (Electron + TypeScript + React) for three jobs
 Plus a **Settings** tab for the downloads folder, quality defaults, and the tools behind the scenes.
 
 ---
+
+## Download the builds
+
+GitHub Actions builds both apps on every push (`.github/workflows/build.yml`):
+
+1. Open the repository's **Actions** tab and pick the latest **Build** run.
+2. Under **Artifacts**, download **YTD-Studio-Windows** (the `...-setup.exe` installer) and/or
+   **YTD-Studio-Android** (the APKs).
+
+Pushing a tag such as `v1.0.1` also creates a **GitHub Release** with both attached, which is easier
+to open on a phone (no sign-in or zip file).
 
 ## Quick start
 
@@ -92,6 +104,13 @@ HTTP server on `127.0.0.1:47821` that resolves the requested quality through yt-
 bytes through with the right headers (forwarding `Range` so scrubbing works), re-resolves expired
 URLs automatically, serves your downloaded files, and proxies thumbnails.
 
+YouTube also needs a JavaScript runtime for yt-dlp to see the full format list (without one it
+falls back to a limited client whose formats are mostly HLS, which `<video>` cannot play). Electron
+already contains Node, so the app passes `--js-runtimes node:<its own executable>` and runs that in
+plain-Node mode (`ELECTRON_RUN_AS_NODE=1`); nothing extra to install. The proxy only offers plain
+HTTPS formats to the player and reads googlevideo in bounded 10 MB ranges with the headers yt-dlp
+reports, the same way yt-dlp downloads them.
+
 High resolutions have no single muxed stream, so the app plays the video-only and audio-only
 streams together: the visible video element (with the normal player controls) is the clock, and a
 hidden audio element follows it (about 0.3s tolerance). Volume and mute are mirrored to the audio.
@@ -134,10 +153,111 @@ Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg li
 
 ---
 
+## Android app
+
+`android/` is a native Kotlin + Jetpack Compose app with the same idea: paste a link (or **Share** a
+video from the YouTube app to *YTD Studio*), download the video or its audio to the phone, and watch
+it offline.
+
+| Tab | What it does |
+| --- | --- |
+| Download | Analyze a link or playlist, pick video (Best / 1080p / 720p ...) or audio (M4A / MP3 / OPUS), live queue with progress, stage ("Downloading video", "Downloading audio track", "Merging video and audio", "Saving..."), history and retry. Downloads keep running in the background with a progress notification. |
+| Stream | Play a link in the built-in player without saving it (no ads). |
+| Library | Everything you downloaded, playable offline in the built-in player, or open/share with any app. |
+| Settings | Default mode and quality, audio format, parallel downloads, yt-dlp version and updates. |
+
+Files are saved through Android's MediaStore into **Movies/YTD Studio** (video) and
+**Music/YTD Studio** (audio), so they show up in Gallery and music players and stay on the phone
+even if the app is uninstalled. No storage permission is needed. Android 10 or newer.
+
+### Does Android need yt-dlp and ffmpeg? Yes, and they are inside the APK
+
+- **ffmpeg is required.** YouTube serves anything above 360p as a separate video stream and audio
+  stream; ffmpeg joins them into one MP4. It also converts audio to MP3 and embeds cover art.
+- **yt-dlp is required** to read YouTube at all, and it is a Python program.
+- **A JavaScript runtime is required** by current yt-dlp to solve YouTube's player challenges.
+
+The desktop app downloads `yt-dlp.exe` and `ffmpeg.exe` on first run. Android cannot do that: apps
+may not execute files they downloaded into their own storage (since Android 10). The app therefore
+uses [youtubedl-android](https://github.com/JunkFood02/youtubedl-android) (the library behind
+apps like Seal), which ships **CPython, ffmpeg/ffprobe and QuickJS as native libraries** (`lib*.so`)
+inside the APK. Android installs those into the app's native library folder, which is allowed to
+execute, and the app unpacks the Python standard library and ffmpeg's shared libraries into its
+private storage on first launch (a few seconds, once).
+
+yt-dlp itself is just a Python zip file that this Python runs. That is what allows the app to keep
+it current: on launch (at most every 12 hours) and from **Settings > Check for update now** it
+fetches the newest release from yt-dlp's GitHub, exactly like the desktop app does.
+
+Because those binaries are per-CPU, the build produces one APK per CPU type (about 60 MB each):
+
+| APK | For |
+| --- | --- |
+| `YTD-Studio-<version>-arm64-v8a-release.apk` | Practically every phone from the last 8 years. **Use this one.** |
+| `YTD-Studio-<version>-armeabi-v7a-release.apk` | Old 32-bit phones |
+| `YTD-Studio-<version>-x86_64-release.apk` | The Android emulator / Chromebooks |
+
+### Installing on your phone
+
+Download the APK on the phone (or copy it over), open it, and allow "install unknown apps" for your
+browser or file manager when Android asks.
+
+**Updates install over the old version only if both are signed with the same key.** Without
+configuration, each CI build is signed with a fresh debug key, so you would have to uninstall
+before installing a newer build. To keep one key, create a keystore once and add it as repository
+secrets (Settings > Secrets and variables > Actions):
+
+```bash
+keytool -genkeypair -v -keystore ytd-release.jks -alias ytd -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 ytd-release.jks   # copy the output
+```
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | the base64 text from above |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | `ytd` |
+| `ANDROID_KEY_PASSWORD` | the key password (same as the keystore password if you did not set one) |
+
+Keep `ytd-release.jks` somewhere safe and never commit it. Every build is numbered with the CI run
+number, so newer builds always install as updates.
+
+### Building the APK locally
+
+Needs JDK 17 and the Android SDK (Android Studio installs both):
+
+```bash
+cd android
+./gradlew assembleRelease     # APKs in android/app/build/outputs/apk/release/
+```
+
+### Android layout
+
+```text
+android/app/src/main/java/com/ytdstudio/android/
+  engine/Engine.kt          yt-dlp: init, self-update, probe, download (progress + stages), stream URLs
+  service/DownloadService   foreground service running the queue, progress notification, wake lock
+  data/                     job queue + history (JSON), settings, MediaStore save/list (MediaLibrary)
+  ui/                       Compose screens, Media3 player (with 10 MB chunked reads for streams)
+```
+
+---
+
+## Desktop end-to-end test (no YouTube needed)
+
+`pnpm build && pnpm test:e2e` (Linux: wrap it in `xvfb-run -a`) launches the real app with a
+stand-in yt-dlp (`scripts/e2e/fake-ytdlp`) and a fake media host, and checks the queue, live
+progress and stages, history, library grouping and in-app streaming. CI runs it on every push.
+Needs `python3` and `ffmpeg`.
+
+---
+
 ## Licensing
 
 YTD Studio's own code is MIT licensed (see [LICENSE](LICENSE)). It does not redistribute any third-party
 downloader or media tool: [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) and
 [FFmpeg](https://ffmpeg.org) (the downloaded build is GPL v3) are fetched onto the user's machine at
-runtime and run as separate programs. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+runtime and run as separate programs. The **Android APK is different**: it bundles yt-dlp, CPython,
+FFmpeg and QuickJS through youtubedl-android (GPL-3.0), so the APK as a whole is distributed under
+GPL-3.0 terms; its source is this repository. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 Use this app only for content you have the right to download.
