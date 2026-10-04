@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Stand-in for yt-dlp: same CLI shape and output lines the app parses, no network."""
+import json, os, shutil, sys, time
+args = sys.argv[1:]
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, 'calls.log'), 'a') as log:
+    log.write(json.dumps({'args': args, 'run_as_node': os.environ.get('ELECTRON_RUN_AS_NODE')}) + '\n')
+if args == ['--version']:
+    print('2026.08.19'); sys.exit(0)
+BASE = os.environ.get('FAKE_MEDIA_BASE', 'http://127.0.0.1:18080')
+HDR = {'User-Agent': 'FakeClient/1.0', 'X-Client-Check': 'visionos'}
+def fmt(fid, ext, proto, h, v, a, path):
+    return {'format_id': fid, 'ext': ext, 'protocol': proto, 'height': h, 'vcodec': v, 'acodec': a,
+            'url': BASE + path, 'http_headers': HDR, 'tbr': 500, 'abr': 128 if a != 'none' else None}
+FORMATS = [
+    fmt('18', 'mp4', 'https', 360, 'avc1.42001E', 'mp4a.40.2', '/muxed.mp4'),
+    fmt('134', 'mp4', 'https', 480, 'avc1.4d401e', 'none', '/video.mp4'),
+    fmt('140', 'm4a', 'https', None, 'none', 'mp4a.40.2', '/audio.m4a'),
+    # HLS rendition at a higher resolution: a <video> element cannot play this; the app must skip it.
+    fmt('96', 'mp4', 'm3u8_native', 1080, 'avc1.640028', 'mp4a.40.2', '/master.m3u8'),
+]
+INFO = {'id': 'abc123def45', 'title': 'Test Clip', 'uploader': 'Tester', 'duration': 20,
+        'thumbnail': 'https://i.ytimg.com/vi/abc123def45/hqdefault.jpg', 'webpage_url': 'https://www.youtube.com/watch?v=abc123def45',
+        'formats': FORMATS, 'extractor_key': 'Youtube'}
+def opt(name):
+    return args[args.index(name) + 1] if name in args else None
+if '-J' in args:
+    print(json.dumps(INFO)); sys.exit(0)
+if '-j' in args:
+    sel = opt('-f')
+    ids = sel.split('+')
+    picked = [f for i in ids for f in FORMATS if f['format_id'] == i]
+    out = dict(INFO)
+    if len(picked) > 1: out['requested_formats'] = picked
+    else: out.update(picked[0])
+    print(json.dumps(out)); sys.exit(0)
+# Download
+out_dir = opt('-P'); pathfile = None
+if '--print-to-file' in args:
+    i = args.index('--print-to-file'); pathfile = args[i + 2]
+stem = os.path.join(out_dir, 'Test Clip [abc123def45]')
+audio_only = '-x' in args
+def say(s): print(s, flush=True)
+say('[youtube] Extracting URL: https://www.youtube.com/watch?v=abc123def45')
+say('[youtube] abc123def45: Downloading webpage'); time.sleep(0.8)
+say('[info] abc123def45: Downloading 1 format(s): ' + ('140' if audio_only else '134+140')); time.sleep(0.5)
+parts = [('.f140.m4a', 'audio.m4a', 180000)] if audio_only else [('.f134.mp4', 'video.mp4', 900000), ('.f140.m4a', 'audio.m4a', 180000)]
+for suffix, src, total in parts:
+    say('[download] Destination: ' + stem + suffix)
+    for step in range(1, 11):
+        say('@@P %d %d NA %d %d' % (total * step // 10, total, 250000, (10 - step)))
+        time.sleep(0.25)
+    shutil.copy(os.path.join(here, 'media', src), stem + suffix)
+    say('[download] 100%% of %d' % total)
+final = stem + ('.m4a' if audio_only else '.mp4')
+if audio_only:
+    say('[ExtractAudio] Destination: ' + final); time.sleep(1.0)
+    os.rename(stem + '.f140.m4a', final)
+else:
+    say('[Merger] Merging formats into "%s"' % final); time.sleep(1.5)
+    shutil.copy(os.path.join(here, 'media', 'muxed.mp4'), final)
+    for suffix, _, _ in parts: os.remove(stem + suffix)
+say('[Metadata] Adding metadata to "%s"' % final); time.sleep(0.6)
+if pathfile:
+    with open(pathfile, 'a', encoding='utf-8') as f: f.write(final + '\n')

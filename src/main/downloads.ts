@@ -369,7 +369,7 @@ class DownloadManager {
         // A merged download fetches the silent video first, then the audio track; each runs 0-100%.
         if (job.mode === 'audio_only') job.stage = 'Downloading audio'
         else if (streams === 1) job.stage = 'Downloading video'
-        else job.stage = 'Downloading audio track (part ' + streams + ')'
+        else job.stage = 'Downloading audio track'
         job.percent = 0
         job.downloadedBytes = 0
         job.totalBytes = 0
