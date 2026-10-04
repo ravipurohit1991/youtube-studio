@@ -1,0 +1,10 @@
+node_modules/
+out/
+release/
+*.log
+.env
+
+# Third-party tools are downloaded by the app at runtime and must never be committed
+bin/
+*.exe
+*.zip
