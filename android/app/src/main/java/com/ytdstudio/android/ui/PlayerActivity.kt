@@ -75,6 +75,8 @@ class PlayerActivity : ComponentActivity() {
     private var nowPlaying by mutableStateOf("")
     private var chromeVisible by mutableStateOf(true)
     private var inPip by mutableStateOf(false)
+    /** Another player screen took over the session: leaving this one must not touch playback. */
+    private var replaced = false
     private val app get() = application as YtdApp
 
     private val listener = object : Player.Listener {
@@ -90,7 +92,10 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Only one player screen at a time; a new one takes over the session.
-        active?.get()?.takeIf { it !== this }?.finish()
+        active?.get()?.takeIf { it !== this }?.let {
+            it.replaced = true
+            it.finish()
+        }
         active = WeakReference(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -262,12 +267,12 @@ class PlayerActivity : ComponentActivity() {
 
     /** Videos stop when you leave them, unless background play is on. Audio keeps going. */
     private fun pauseVideoIfForeground() {
-        if (!app.prefs.settings.value.backgroundVideo && showsVideo()) controller?.pause()
+        if (!replaced && !app.prefs.settings.value.backgroundVideo && showsVideo()) controller?.pause()
     }
 
     override fun onDestroy() {
         val c = controller
-        if (isFinishing && c != null && showsVideo() && !app.prefs.settings.value.backgroundVideo) {
+        if (isFinishing && !replaced && c != null && showsVideo() && !app.prefs.settings.value.backgroundVideo) {
             c.stop()
             c.clearMediaItems()
         }
