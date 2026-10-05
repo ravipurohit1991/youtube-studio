@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Cpu, Download, FolderOpen, HardDrive, Info, Network, Palette, RefreshCw, RotateCcw, Save, Wrench } from 'lucide-react'
-import type { AppInfo, AudioFormat, AudioQuality, BrowserName, DownloadMode, Settings, ThemeMode, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
+import type { AiStatus, AppInfo, AudioFormat, AudioQuality, BrowserName, DownloadMode, Settings, ThemeMode, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
 import { errorMessage, unwrap } from '../lib/api'
 import { ProgressBar } from './common'
+import AiSettingsCard from './AiSettingsCard'
 import type { ToastTone } from '../lib/types'
 
 interface Props {
@@ -18,6 +19,8 @@ interface Props {
   onRefreshTools: () => Promise<void>
   updateInfo: YtdlpUpdateInfo | null
   onCheckUpdate: (force: boolean) => Promise<YtdlpUpdateInfo | null>
+  aiStatus: AiStatus | null
+  onAiStatus: (status: AiStatus) => void
 }
 
 const BROWSERS: { value: BrowserName; label: string }[] = [
@@ -53,6 +56,8 @@ export default function SettingsTab({
   onRefreshTools,
   updateInfo,
   onCheckUpdate,
+  aiStatus,
+  onAiStatus,
 }: Props): ReactNode {
   const [ytdlpPathInput, setYtdlpPathInput] = useState(settings.ytdlpPath)
   const [ffmpegPathInput, setFfmpegPathInput] = useState(settings.ffmpegPath)
@@ -101,6 +106,8 @@ export default function SettingsTab({
           New downloads go here, and the Library tab reads this folder. Thumbnails and metadata files are stored next to each video.
         </div>
       </div>
+
+      <AiSettingsCard status={aiStatus} settings={settings} onSettingsChange={onSettingsChange} onStatus={onAiStatus} pushToast={pushToast} />
 
       <div className="card">
         <div className="card-title"><Download size={15} /><span>Download defaults</span></div>

@@ -1,7 +1,7 @@
 # YTD Studio
 
 A lightweight Windows desktop app (Electron + TypeScript + React), plus an [Android app](#android-app)
-with the same features, for four jobs:
+with the same core features, for four jobs, plus an optional [AI layer](#ai-discover-summaries-and-smart-playlists-ollama) on the desktop:
 
 1. **Stream**: paste a YouTube link and watch it inside the app. No ads, no popups, and seeking works properly.
 2. **Download**: two modes only. The **whole video (with audio)** as MP4, or **audio only** (MP3/M4A/OPUS/WAV/FLAC).
@@ -13,6 +13,15 @@ with the same features, for four jobs:
    downloaded YouTube playlists, and **playlists of your own** (create, rename, reorder, play all, shuffle).
 
 Plus a **Settings** tab for the downloads folder, quality defaults, and the tools behind the scenes.
+
+With an [Ollama](https://ollama.com) model connected (Ollama Cloud with your API key, or a local Ollama):
+
+5. **Discover**: your own YouTube algorithm. Describe what you want in plain words; the model plans the
+   searches, the app runs them, and the model ranks every result for *you*, with a reason for each pick.
+   Refine it conversationally, give thumbs up/down, hide channels, or let **For you** work from your library.
+6. **AI insights**: a streamed *TL;DW* summary of any video from its captions, with **clickable key
+   moments** that jump the player there, and a chat to ask questions about the video.
+7. **Smart playlists**: the model sorts your library into themed playlists; you pick which ones to create.
 
 ---
 
@@ -73,6 +82,74 @@ YouTube changes constantly, so an out-of-date yt-dlp is the most common cause of
 
 ---
 
+## AI: Discover, summaries and smart playlists (Ollama)
+
+Everything AI is optional and off until you connect a model. Open **Settings > AI (Ollama)**:
+
+1. **Server**: *Ollama Cloud* (`https://ollama.com`, the default) or *Local Ollama* (`http://localhost:11434`).
+2. **API key** (needed for the cloud): create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)
+   and paste it. It is stored encrypted with your OS keychain (Electron `safeStorage`; Windows DPAPI) in
+   `ai-key.json`, stays in the main process (the UI only learns "a key ending in ...7f3a is saved"), and is
+   only sent to your AI server (HTTPS or this machine, never plain HTTP to another machine) and to Ollama
+   web search. The `OLLAMA_API_KEY` environment variable works too.
+3. **Model**: picked from the server's list (`/api/tags`). A strong default is chosen for you; **Test**
+   sends one tiny prompt. Bigger models rank and summarize better, smaller ones answer faster.
+
+### Discover: your own recommendation algorithm
+
+YouTube's recommendations optimize for watch time. Discover optimizes for what you asked:
+
+```text
+"honest reviews of budget mechanical keyboards, no unboxings"
+   │
+   ├─ taste profile (optional) ── channels you download most, favorites, finished videos,
+   │                              thumbs up/down, hidden channels, recent requests
+   ├─ web lookup (optional) ───── Ollama web search, for new releases and current events
+   ▼
+ PLAN   the model writes 3-6 diverse searches, each with a sort (relevance / upload date / views),
+        plus length bounds and whether Shorts make sense
+   ▼
+ SEARCH yt-dlp runs them as real YouTube results pages with YouTube's own filters
+        (videos only, upload date, duration, sort), 3 at a time
+   ▼
+ FILTER drop duplicates, Shorts, live streams, channels you hid, videos you disliked and
+        videos you already downloaded
+   ▼
+ RANK   the model scores every candidate 0-100 for this request and your taste, penalizing
+        clickbait, reuploads and off-topic results, and says why each pick fits
+```
+
+- **Refine** ("shorter", "more advanced", "no talking heads") keeps the original request and stacks
+  follow-ups; **Undo** drops the last one. **More** fetches new videos without repeats.
+- **Thumbs up / down** and **Never show this channel** are remembered (`ai-taste.json`) and shape every
+  later ranking. *Your taste* lists them and forgets any item with one click.
+- Length and upload-date filters in the bar apply to every search; **Personalize** and **Check the web
+  first** are remembered in Settings.
+- Results play in the Stream tab, download as video or audio (one or many), or open an AI summary first.
+
+### AI insights on any video
+
+The Stream tab (and the summary button on Discover results) reads the video's captions through yt-dlp:
+uploaded English subtitles first, then the captions in the language spoken, then anything available.
+YouTube's rolling automatic captions are de-duplicated and compacted into `[mm:ss]` lines (long videos are
+thinned evenly so the transcript stays around 12k tokens). The summary streams in as *TL;DW*, *Key moments*
+and *Worth watching?*; every `[mm:ss]` is a button that seeks the player. Questions are answered from the
+same transcript, with timestamps. Videos without captions fall back to the description and chapters.
+
+### Smart playlists
+
+**Playlists > Smart playlists (AI)** sends titles, channels and lengths of up to 300 library items, gets back
+3-10 themed groups, and shows them for review. Nothing is created until you click **Create**.
+
+### What is sent where
+
+Only when you use an AI feature: your request; titles, channels, lengths and view counts of search
+results; (with Personalize) titles and channels from your library and your feedback; and the captions of
+videos you summarize or ask about. All of it goes to the server in Settings; web lookups go to Ollama web
+search. Nothing is sent in the background.
+
+---
+
 ## How it works
 
 ```text
@@ -89,8 +166,14 @@ src/
     library.ts       scans the downloads folder and pairs sidecar thumbnails/metadata
     library-state.ts favorites, watch progress, your playlists and synced YouTube playlists (library-state.json)
     settings.ts      JSON-backed settings store
+    ai/
+      ollama.ts        Ollama client (streamed chat, structured JSON, models, web search), encrypted API key
+      discover.ts      plan searches, YouTube filter encoding, search, filter, rank
+      transcript.ts    caption track choice, WebVTT parsing, timestamped transcript for prompts
+      insights.ts      summaries, questions about a video, smart playlists
+      taste.ts         thumbs up/down, hidden channels, recent requests (ai-taste.json)
   preload/         contextBridge API exposed as window.api
-  renderer/        React UI (Stream / Download / Library / Playlists / Settings, player overlay)
+  renderer/        React UI (Discover / Stream / Download / Library / Playlists / Settings, player overlay)
   shared/          types and IPC channel names used by both sides
 scripts/smoke.mjs  end-to-end UI test driven over the Chrome DevTools Protocol
 ```
@@ -155,6 +238,11 @@ node scripts/smoke.mjs
 | A playlist only queues some videos | Use **Download whole playlist**, or tick the videos you want and use **Download N selected**. Up to 2000 entries are read. |
 | A synced playlist re-downloads nothing new | Sync only fetches videos that were not in the playlist when it was saved or last synced. Videos you unticked then are skipped on purpose. |
 | Port 47821 busy | The app automatically falls back to a random free port. |
+| AI: "rejected the request (401)" | The API key is wrong or revoked. Settings > AI > **Replace** and paste a new one. |
+| AI: "usage limit reached (429)" | Your Ollama plan's limit for now. Wait, or pick a smaller model. |
+| AI: "model ... is not available" | The model was removed or renamed. Settings > AI > **Refresh list** and pick another. |
+| AI summary says there is no transcript | The video has no captions; the summary is based on the description and chapters only. |
+| Discover results feel generic | Turn on **Personalize**, give a few thumbs up/down, or use a bigger model. |
 
 Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg live in `%APPDATA%/YTD Studio/bin`.
 
@@ -263,7 +351,9 @@ android/app/src/main/java/com/ytdstudio/android/
 `pnpm build && pnpm test:e2e` (Linux: wrap it in `xvfb-run -a`) launches the real app with a
 stand-in yt-dlp (`scripts/e2e/fake-ytdlp`) and a fake media host, and checks the queue, live
 progress and stages, history, library grouping, in-app streaming, whole-playlist downloads into a
-folder and Sync, favorites, your own playlists and resume. CI runs it on every push.
+folder and Sync, favorites, your own playlists and resume. A fake Ollama server covers the AI features:
+key handling, model pick, Discover's plan/search/filter/rank and feedback, streamed summaries with seeking
+key moments, questions, and smart playlists. CI runs it on every push.
 Needs `python3` and `ffmpeg`.
 
 ---

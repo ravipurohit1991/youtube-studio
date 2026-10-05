@@ -3,6 +3,8 @@ import type { Settings, TabId } from '@shared/types'
 import { log, logError } from './logger'
 import { defaultDownloadsDir, ensureDir, settingsFile } from './paths'
 
+export const DEFAULT_AI_HOST = 'https://ollama.com'
+
 function defaults(): Settings {
   return {
     downloadsDir: defaultDownloadsDir(),
@@ -24,10 +26,14 @@ function defaults(): Settings {
     lastTab: 'stream',
     playlistFolders: true,
     resumePlayback: true,
+    aiHost: DEFAULT_AI_HOST,
+    aiModel: '',
+    aiPersonalize: true,
+    aiUseWeb: false,
   }
 }
 
-const VALID_TABS: TabId[] = ['stream', 'download', 'library', 'playlists', 'settings']
+const VALID_TABS: TabId[] = ['discover', 'stream', 'download', 'library', 'playlists', 'settings']
 
 function coerce(raw: Partial<Settings>): Settings {
   const base = defaults()
@@ -39,6 +45,8 @@ function coerce(raw: Partial<Settings>): Settings {
   if (merged.defaultMode !== 'video_audio' && merged.defaultMode !== 'audio_only') merged.defaultMode = 'video_audio'
   if (!VALID_TABS.includes(merged.lastTab)) merged.lastTab = 'stream'
   if (typeof merged.preferredHeight !== 'number' || merged.preferredHeight < 0) merged.preferredHeight = 1080
+  merged.aiHost = typeof merged.aiHost === 'string' && merged.aiHost.trim() ? merged.aiHost.trim().replace(/\/+$/, '') : base.aiHost
+  if (typeof merged.aiModel !== 'string') merged.aiModel = ''
   return merged
 }
 

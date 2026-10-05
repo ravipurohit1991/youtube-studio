@@ -96,8 +96,63 @@ const server = createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const mediaBase = 'http://127.0.0.1:' + server.address().port
 
+// ---- fake Ollama: /api/tags plus streamed /api/chat answers picked by what each AI step asks for
+const AI_KEY = 'test-key-e2e-7f3a'
+const aiCalls = []
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function streamChat(res, text, thinking = false) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson' })
+  if (thinking) res.write(JSON.stringify({ message: { role: 'assistant', content: '', thinking: 'Let me think.' }, done: false }) + '\n')
+  for (const piece of text.match(/[\s\S]{1,24}/g) ?? []) {
+    res.write(JSON.stringify({ message: { role: 'assistant', content: piece }, done: false }) + '\n')
+    await sleep(15)
+  }
+  res.end(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }) + '\n')
+}
+const ollama = createServer((req, res) => {
+  let raw = ''
+  req.on('data', (c) => (raw += c))
+  req.on('end', async () => {
+    const body = raw ? JSON.parse(raw) : null
+    aiCalls.push({ path: req.url, auth: req.headers.authorization || null, body })
+    if (req.url === '/api/tags') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ models: [{ name: 'gpt-oss:20b', size: 13e9, details: { parameter_size: '20.9B' } }, { name: 'gpt-oss:120b', details: { parameter_size: '116.8B' } }] }))
+      return
+    }
+    if (req.url !== '/api/chat') {
+      res.writeHead(404)
+      res.end('{}')
+      return
+    }
+    const props = body.format && body.format.properties ? body.format.properties : {}
+    const user = body.messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n')
+    const system = body.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n')
+    if (props.queries) {
+      return streamChat(res, JSON.stringify({ intent: 'You want calm music to study to.', queries: [{ q: 'lofi study beats', sort: 'relevance' }, { q: 'chill study music', sort: 'date' }], recency: 'any', minMinutes: 0, maxMinutes: 0, allowShorts: false }), true)
+    }
+    if (props.picks) {
+      // Rank in reverse order of the list, so the test can tell the model's order was used.
+      const n = user.split('\n').filter((l) => /^\d+\. /.test(l)).length
+      const picks = Array.from({ length: n }, (_, k) => ({ i: n - k, score: 95 - k * 4, why: 'Pick ' + (k + 1) + ' because it fits.' })).filter((p) => p.score >= 40)
+      return streamChat(res, '```json\n' + JSON.stringify({ picks }) + '\n```')
+    }
+    if (props.groups) {
+      return streamChat(res, JSON.stringify({ groups: [{ name: 'Test Mix', description: 'All the test clips', items: [1, 2, 3] }, { name: 'More Clips', description: 'The rest', items: [4, 5, 6] }] }))
+    }
+    if (/TL;DW/.test(system)) {
+      return streamChat(res, '## TL;DW\nA **test clip** with a tone.\n\n## Key moments\n- [00:03] The tone starts\n- [00:12] Halfway point\n\n## Worth watching?\nOnly for tests.', true)
+    }
+    if (/answer questions about one YouTube video/.test(system)) return streamChat(res, 'It says hello at [00:02].')
+    return streamChat(res, 'YTD Studio is connected.')
+  })
+})
+await new Promise((resolve) => ollama.listen(0, '127.0.0.1', resolve))
+const ollamaHost = 'http://127.0.0.1:' + ollama.address().port
+
 const env = { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config, FAKE_MEDIA_BASE: mediaBase }
 delete env.ELECTRON_RUN_AS_NODE
+delete env.OLLAMA_API_KEY
 const app = await _electron.launch({ executablePath: electronPath, args: ['--no-sandbox', REPO], cwd: REPO, env })
 let exitCode = 1
 try {
@@ -198,7 +253,7 @@ try {
   const waitFor = async (fn, ms) => {
     const t0 = Date.now()
     while (Date.now() - t0 < ms) {
-      if (fn()) return true
+      if (await fn()) return true
       await page.waitForTimeout(250)
     }
     return false
@@ -282,6 +337,88 @@ try {
   const saved = stateFile ? JSON.parse(readFileSync(stateFile, 'utf8')) : null
   check('favorites, playlists and progress persist to disk', !!saved && saved.favorites.length === 1 && saved.playlists.length === 1 && Object.values(saved.progress).some((p) => p.position > 5))
 
+  // ---- AI: settings (server, key, model), Discover, video insights, smart playlists
+  await page.click('button.nav-item:has-text("Discover")')
+  check('Discover asks to set up AI first', (await page.locator('[data-tab="discover"] button:has-text("Set up AI")').count()) === 1)
+  await page.click('[data-tab="discover"] button:has-text("Set up AI")')
+  await page.waitForSelector('#ai-settings', { timeout: 5000 })
+  await page.fill('#ai-host', ollamaHost)
+  await page.press('#ai-host', 'Enter')
+  await page.fill('#ai-key', AI_KEY)
+  await page.click('#ai-settings button:has-text("Save key")')
+  const modelPicked = await waitFor(async () => (await page.inputValue('#ai-model').catch(() => '')) === 'gpt-oss:120b', 10000)
+  check('models are listed and a strong default is picked', modelPicked)
+  await page.click('#ai-settings button:has-text("Test")')
+  const tested = await page.waitForSelector('#ai-settings :text("answered in")', { timeout: 10000 }).then(() => true, () => false)
+  check('connection test talks to the model', tested)
+  check('the API key is sent as a Bearer token', aiCalls.some((c) => c.path === '/api/chat' && c.auth === 'Bearer ' + AI_KEY))
+  const settingsText = ['YTD Studio', 'ytd-studio'].map((n) => { try { return readFileSync(join(config, n, 'settings.json'), 'utf8') } catch { return '' } }).join('')
+  check('the API key is not written to settings.json', settingsText.includes('gpt-oss:120b') && !settingsText.includes(AI_KEY))
+  const keyInRenderer = await page.evaluate((key) => document.documentElement.outerHTML.includes(key), AI_KEY)
+  check('the renderer never sees the API key', !keyInRenderer)
+
+  await page.click('button.nav-item:has-text("Discover")')
+  await page.fill('.discover-input', 'calm music to study to')
+  await page.click('button:has-text("Find videos")')
+  const found = await page.waitForSelector('.disc-card', { timeout: 30000 }).then(() => true, () => false)
+  check('Discover returns ranked videos', found)
+  const planCall = aiCalls.find((c) => c.body && c.body.format && c.body.format.properties && c.body.format.properties.queries)
+  const rankCall = aiCalls.find((c) => c.body && c.body.format && c.body.format.properties && c.body.format.properties.picks)
+  const listed = rankCall ? rankCall.body.messages.find((m) => m.role === 'user').content.split('\n').filter((l) => /^\d+\. /.test(l)) : []
+  const cards = await page.$$eval('.disc-card .lib-name', (els) => els.map((e) => e.textContent))
+  console.log('  discover:', cards.join(' | '))
+  check('plan request carries the prompt and a taste profile from the library', !!planCall && /calm music to study to/.test(planCall.body.messages[1].content) && /Song Title|Test Clip/.test(planCall.body.messages[1].content))
+  check('model ranking decides the order', listed.length > 2 && cards[0] === listed[listed.length - 1].replace(/^\d+\. /, '').split(' | ')[0])
+  check('shorts, live streams, channels and owned videos are filtered out', listed.length === 8 && !listed.some((l) => /A short about|LIVE |A channel|Song Title/.test(l)))
+  check('each pick shows a match score and a reason', (await page.locator('.disc-card .match').count()) === cards.length && (await page.locator('.disc-card .reason').first().textContent()).includes('because it fits'))
+  const ytCalls = readFileSync(join(WORK, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const searches = ytCalls.map((c) => c.args[c.args.length - 1]).filter((u) => u.includes('results?search_query='))
+  console.log('  searches:', searches.join(' | '))
+  // EgIQAQ== is "type: video"; CAISAhAB is "sort by upload date" + "type: video".
+  check('searches use YouTube filters (videos only, per-query sort)', searches.length === 2 && searches.some((u) => u.includes('sp=EgIQAQ%3D%3D')) && searches.some((u) => u.includes('sp=CAISAhAB')))
+
+  const disliked = cards[1]
+  await page.locator('.disc-card').nth(1).locator('button[title="Less like this"]').click()
+  await page.waitForTimeout(500)
+  const afterVote = await page.$$eval('.disc-card .lib-name', (els) => els.map((e) => e.textContent))
+  const tasteFile = ['YTD Studio', 'ytd-studio'].map((n) => join(config, n, 'ai-taste.json')).find((f) => { try { readFileSync(f); return true } catch { return false } })
+  const tasteSaved = tasteFile ? JSON.parse(readFileSync(tasteFile, 'utf8')) : null
+  check('thumbs down hides the video and is remembered', !afterVote.includes(disliked) && !!tasteSaved && tasteSaved.disliked.some((d) => d.title === disliked))
+
+  const before = aiCalls.length
+  await page.click('.chip-btn:has-text("Shorter")')
+  await page.waitForSelector('[data-tab="discover"] :text("Refined:")', { timeout: 30000 })
+  const refineCall = aiCalls.slice(before).find((c) => c.body && c.body.format && c.body.format.properties && c.body.format.properties.queries)
+  check('refining sends the follow-up with the original request', !!refineCall && /Follow-up adjustments[\s\S]*shorter/.test(refineCall.body.messages[1].content) && /calm music to study to/.test(refineCall.body.messages[1].content))
+  check('disliked suggestions feed back into the profile', !!refineCall && refineCall.body.messages[1].content.includes(disliked))
+
+  // Insights on the stream page: streamed summary with clickable key moments, then a question.
+  await page.locator('.disc-card').first().locator('button:has-text("Play")').click()
+  await page.waitForSelector('[data-tab="stream"] .video-frame video', { timeout: 20000 })
+  await page.evaluate(() => { document.querySelector('[data-tab="stream"] .video-frame video').muted = true })
+  await page.click('[data-tab="stream"] .ai-card button:has-text("Summarize")')
+  const summarized = await page.waitForSelector('[data-tab="stream"] .ai-summary .stamp:has-text("00:12")', { timeout: 20000 }).then(() => true, () => false)
+  check('summary streams in with key moments', summarized && (await page.locator('[data-tab="stream"] .ai-summary h4').count()) === 3)
+  const sumCall = aiCalls.find((c) => c.body && c.body.messages && /TL;DW/.test(c.body.messages[0].content))
+  check('summary is built from the captions (rolling lines collapsed)', !!sumCall && /\[00:01\] hello from the captions the tone starts halfway & still going/.test(sumCall.body.messages[1].content))
+  await page.click('[data-tab="stream"] .ai-summary .stamp:has-text("00:12")')
+  await page.waitForTimeout(800)
+  const jumped = await page.evaluate(() => document.querySelector('[data-tab="stream"] .video-frame video').currentTime)
+  check('clicking a key moment seeks the player', jumped >= 11.5, 't=' + jumped.toFixed(1))
+  await page.fill('[data-tab="stream"] .ai-card input', 'What does it say first?')
+  await page.press('[data-tab="stream"] .ai-card input', 'Enter')
+  const answered = await page.waitForSelector('[data-tab="stream"] .bubble.assistant .stamp:has-text("00:02")', { timeout: 15000 }).then(() => true, () => false)
+  check('questions about the video get answers with timestamps', answered)
+  await page.evaluate(() => document.querySelector('[data-tab="stream"] .video-frame video').pause())
+
+  // Smart playlists: grouped by the model, created only after confirming.
+  await page.click('button.nav-item:has-text("Playlists")')
+  await page.click('button:has-text("Smart playlists (AI)")')
+  await page.waitForSelector('.smart-group', { timeout: 20000 })
+  await page.click('.smart-modal button:has-text("Create 2 playlist(s)")')
+  const smartMade = await page.waitForSelector('.pl-item:has-text("Test Mix")', { timeout: 10000 }).then(() => true, () => false)
+  check('smart playlists are created from the AI grouping', smartMade && (await page.locator('.pl-item:has-text("More Clips")').count()) === 1)
+
   // ---- yt-dlp invocation
   const calls = readFileSync(join(WORK, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.args[0] !== '--version')
   check('yt-dlp gets --js-runtimes node:<app executable>', calls.length > 0 && calls.every((c) => (c.args[c.args.indexOf('--js-runtimes') + 1] || '').startsWith('node:')))
@@ -292,6 +429,7 @@ try {
 } finally {
   await app.close().catch(() => undefined)
   server.close()
+  ollama.close()
   console.log(`\n${results.filter(Boolean).length}/${results.length} checks passed`)
   if (exitCode === 0) rmSync(WORK, { recursive: true, force: true })
   else console.log('work dir kept for inspection:', WORK)

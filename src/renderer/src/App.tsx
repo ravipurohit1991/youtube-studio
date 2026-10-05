@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Download, RefreshCw, TriangleAlert } from 'lucide-react'
-import type { AppInfo, DownloadJob, DownloadMode, LibraryItem, LibraryState, SavedPlaylist, Settings, TabId, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
+import type { AiStatus, AppInfo, DownloadJob, DownloadMode, LibraryItem, LibraryState, SavedPlaylist, Settings, TabId, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
 import AddToPlaylist from './components/AddToPlaylist'
+import DiscoverTab from './components/DiscoverTab'
+import SmartPlaylists from './components/SmartPlaylists'
 import PlaylistsTab from './components/PlaylistsTab'
 import DownloadTab from './components/DownloadTab'
 import LibraryTab from './components/LibraryTab'
@@ -12,9 +14,10 @@ import StreamTab from './components/StreamTab'
 import Toasts from './components/Toasts'
 import { errorMessage, unwrap } from './lib/api'
 import { makeQueue, stepped, withShuffle } from './lib/queue'
-import type { DownloadDraft, PlayQueue, ToastItem, ToastTone } from './lib/types'
+import type { DownloadDraft, PlayQueue, StreamDraft, ToastItem, ToastTone } from './lib/types'
 
 const TAB_TITLES: Record<TabId, { title: string; sub: string }> = {
+  discover: { title: 'Discover', sub: 'Your own YouTube algorithm: say what you want, AI finds and ranks it for you.' },
   stream: { title: 'Stream', sub: 'Play a YouTube link right here — no ads, no popups.' },
   download: { title: 'Download', sub: 'Save the whole video (with audio) or just the audio.' },
   library: { title: 'Library', sub: 'Everything you downloaded: pick up where you left off, favorite, sort into playlists.' },
@@ -54,6 +57,9 @@ export default function App(): ReactNode {
   const [libState, setLibState] = useState<LibraryState>({ favorites: [], progress: {}, playlists: [], saved: [] })
   const [addKeys, setAddKeys] = useState<string[] | null>(null)
   const [syncing, setSyncing] = useState<string[]>([])
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
+  const [streamDraft, setStreamDraft] = useState<StreamDraft | null>(null)
+  const [smartOpen, setSmartOpen] = useState(false)
   const toastId = useRef(0)
   const lastDir = useRef('')
 
@@ -116,12 +122,14 @@ export default function App(): ReactNode {
     let cancelled = false
     const boot = async (): Promise<void> => {
       try {
-        const [appInfo, jobList, state] = await Promise.all([
+        const [appInfo, jobList, state, ai] = await Promise.all([
           unwrap(window.api.getAppInfo()),
           unwrap(window.api.listJobs()),
           unwrap(window.api.getLibraryState()),
+          unwrap(window.api.aiStatus()).catch(() => null),
         ])
         if (cancelled) return
+        setAiStatus(ai)
         setLibState(state)
         setInfo(appInfo)
         setSettings(appInfo.settings)
@@ -199,6 +207,10 @@ export default function App(): ReactNode {
       }
       if ('ytdlpPath' in patch || 'ffmpegPath' in patch || 'proxy' in patch || 'cookiesFromBrowser' in patch) {
         void refreshTools()
+      }
+      // {} is sent after "Reset all settings", which also resets the AI server and model.
+      if (!Object.keys(patch).length || 'aiHost' in patch || 'aiModel' in patch) {
+        void unwrap(window.api.aiStatus()).then(setAiStatus).catch(() => undefined)
       }
       return next
     } catch (err) {
@@ -283,6 +295,25 @@ export default function App(): ReactNode {
     changeTab('download')
   }, [changeTab])
 
+  const playInStream = useCallback((url: string, startAt?: number) => {
+    setStreamDraft({ url, startAt, nonce: Date.now() })
+    changeTab('stream')
+  }, [changeTab])
+
+  const openAiSettings = useCallback(() => {
+    changeTab('settings')
+    window.setTimeout(() => document.getElementById('ai-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+  }, [changeTab])
+
+  const openSmartPlaylists = useCallback(() => {
+    if (!aiStatus?.ready) {
+      pushToast('Set up AI in Settings first: add your Ollama API key and pick a model.', 'info')
+      openAiSettings()
+      return
+    }
+    setSmartOpen(true)
+  }, [aiStatus?.ready, pushToast, openAiSettings])
+
   const activeDownloads = useMemo(
     () => jobs.filter((job) => job.status === 'downloading' || job.status === 'processing' || job.status === 'queued').length,
     [jobs],
@@ -312,6 +343,7 @@ export default function App(): ReactNode {
         playlistCount={libState.playlists.length + new Set(library.map((item) => item.folder).filter(Boolean)).size}
         toolBusy={installing}
         ytdlpUpdate={!!(updateInfo && updateInfo.updateAvailable)}
+        aiStatus={aiStatus}
       />
       <div className="main">
         <header className="topbar">
@@ -373,8 +405,26 @@ export default function App(): ReactNode {
           </div>
         ) : null}
 
+        <TabPanel id="discover" active={tab === 'discover'}>
+          <DiscoverTab
+            settings={settings}
+            aiStatus={aiStatus}
+            ytdlpReady={info.ytdlp.ok}
+            pushToast={pushToast}
+            onSettingsChange={updateSettings}
+            onPlay={playInStream}
+            onOpenSettings={openAiSettings}
+          />
+        </TabPanel>
         <TabPanel id="stream" active={tab === 'stream'}>
-          <StreamTab settings={settings} pushToast={pushToast} onDownload={sendToDownload} />
+          <StreamTab
+            settings={settings}
+            pushToast={pushToast}
+            onDownload={sendToDownload}
+            draft={streamDraft}
+            aiReady={!!aiStatus?.ready}
+            onOpenAiSettings={openAiSettings}
+          />
         </TabPanel>
         <TabPanel id="download" active={tab === 'download'}>
           <DownloadTab
@@ -416,6 +466,7 @@ export default function App(): ReactNode {
             onPlay={playItems}
             onAddToPlaylist={setAddKeys}
             onSync={(playlist) => void syncPlaylist(playlist)}
+            onSmartPlaylists={openSmartPlaylists}
           />
         </TabPanel>
         <TabPanel id="settings" active={tab === 'settings'}>
@@ -432,6 +483,8 @@ export default function App(): ReactNode {
             onRefreshTools={refreshTools}
             updateInfo={updateInfo}
             onCheckUpdate={checkForUpdate}
+            aiStatus={aiStatus}
+            onAiStatus={setAiStatus}
           />
         </TabPanel>
       </div>
@@ -448,6 +501,14 @@ export default function App(): ReactNode {
           onRepeat={(repeat) => setPlayQueue((previous) => (previous ? { ...previous, repeat } : previous))}
           onToggleFavorite={(key) => void window.api.toggleFavorite(key)}
           onAddToPlaylist={(key) => setAddKeys([key])}
+        />
+      ) : null}
+
+      {smartOpen ? (
+        <SmartPlaylists
+          items={library}
+          pushToast={pushToast}
+          onClose={() => setSmartOpen(false)}
         />
       ) : null}
 

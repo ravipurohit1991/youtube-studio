@@ -1,6 +1,6 @@
 /** Shared types used by the main process, preload bridge and renderer UI. */
 
-export type TabId = 'stream' | 'download' | 'library' | 'playlists' | 'settings'
+export type TabId = 'discover' | 'stream' | 'download' | 'library' | 'playlists' | 'settings'
 export type DownloadMode = 'video_audio' | 'audio_only'
 export type AudioFormat = 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac'
 export type AudioQuality = '0' | '2' | '5'
@@ -199,6 +199,14 @@ export interface Settings {
   playlistFolders: boolean
   /** Start library items where they were left off. */
   resumePlayback: boolean
+  /** Ollama server for the AI features: https://ollama.com (Ollama Cloud) or a local http://localhost:11434. */
+  aiHost: string
+  /** Model the AI features use, as listed by the host (for example gpt-oss:120b). */
+  aiModel: string
+  /** Let Discover use your library, favorites and feedback as a taste profile. */
+  aiPersonalize: boolean
+  /** Let Discover look the request up on the web (Ollama web search) before planning searches. */
+  aiUseWeb: boolean
 }
 
 export interface ToolStatus {
@@ -300,6 +308,164 @@ export interface YtdlpUpdateInfo {
   checkedAt: number
 }
 
+/* ---------- AI (Ollama) ---------- */
+
+/** What the renderer may know about the AI setup. The API key itself never leaves the main process. */
+export interface AiStatus {
+  host: string
+  model: string
+  hasKey: boolean
+  /** Last four characters of the key, to recognize which one is stored. */
+  keyHint: string | null
+  /** The key is encrypted with the OS keychain (Electron safeStorage). */
+  encrypted: boolean
+  /** The host is Ollama Cloud (ollama.com), which needs a key. */
+  isCloud: boolean
+  /** Ready to use: a model is picked and (for the cloud) a key is stored. */
+  ready: boolean
+}
+
+export interface AiModel {
+  name: string
+  size: number | null
+  parameterSize: string | null
+  family: string | null
+  modifiedAt: string | null
+}
+
+export interface AiTestResult {
+  model: string
+  reply: string
+  latencyMs: number
+}
+
+export type DiscoverLength = 'any' | 'short' | 'medium' | 'long'
+export type DiscoverRecency = 'any' | 'today' | 'week' | 'month' | 'year'
+export type DiscoverSort = 'relevance' | 'date' | 'views' | 'rating'
+
+export interface DiscoverRequest {
+  requestId: string
+  /** What to look for. Empty means "for you": derive it from the taste profile. */
+  prompt: string
+  /** Earlier requests in this session and follow-ups ("shorter", "less clickbait"), oldest first. */
+  refinements?: string[]
+  /** Video ids already shown, left out of the results ("more like this"). */
+  exclude?: string[]
+  length: DiscoverLength
+  recency: DiscoverRecency
+  avoid?: string
+  personalize: boolean
+  useWeb: boolean
+}
+
+export interface DiscoverQuery {
+  q: string
+  sort: DiscoverSort
+  found: number
+}
+
+export interface DiscoverVideo {
+  id: string
+  url: string
+  title: string
+  channel: string | null
+  duration: number | null
+  views: number | null
+  thumbnail: string | null
+  /** 0-100: how well the model thinks it fits. */
+  score: number | null
+  /** One sentence on why it fits. */
+  reason: string | null
+  /** The search that found it. */
+  query: string
+}
+
+export interface DiscoverResult {
+  requestId: string
+  /** The model's one-line reading of the request. */
+  intent: string
+  queries: DiscoverQuery[]
+  videos: DiscoverVideo[]
+  candidates: number
+  webSources: { title: string; url: string }[]
+  model: string
+  elapsedMs: number
+  /** Ranking failed and results are in search order. */
+  unranked: boolean
+}
+
+export interface InsightRequest {
+  requestId: string
+  url: string
+}
+
+export interface AskRequest {
+  requestId: string
+  url: string
+  question: string
+  history: { role: 'user' | 'assistant'; content: string }[]
+}
+
+/** The video a summary or answer is based on. */
+export interface InsightSource {
+  videoId: string
+  title: string
+  channel: string | null
+  duration: number | null
+  /** Caption language used, or null when there is no transcript (description only). */
+  language: string | null
+  autoCaptions: boolean
+}
+
+export interface InsightResult {
+  requestId: string
+  source: InsightSource
+  text: string
+  model: string
+}
+
+export interface OrganizeGroup {
+  name: string
+  description: string
+  keys: string[]
+}
+
+export interface OrganizeResult {
+  requestId: string
+  groups: OrganizeGroup[]
+  considered: number
+  model: string
+}
+
+/** Live progress of an AI request: a stage label, and streamed text for summaries and answers. */
+export interface AiProgress {
+  requestId: string
+  stage?: string
+  delta?: string
+  thinking?: boolean
+  source?: InsightSource
+}
+
+export interface TasteItem {
+  id: string
+  title: string
+  channel: string | null
+  at: number
+}
+
+/** Feedback from Discover, kept across sessions: what to steer toward and away from. */
+export interface TasteProfile {
+  liked: TasteItem[]
+  disliked: TasteItem[]
+  blockedChannels: string[]
+  recent: string[]
+}
+
+export type TasteAction =
+  | { kind: 'like' | 'dislike' | 'clear'; item: TasteItem }
+  | { kind: 'block' | 'unblock'; channel: string }
+  | { kind: 'reset' }
+
 /** The exact surface exposed on window.api by the preload bridge. */
 export interface DesktopApi {
   getAppInfo(): Promise<IpcResult<AppInfo>>
@@ -341,6 +507,19 @@ export interface DesktopApi {
   savePlaylist(playlist: SavedPlaylist): Promise<IpcResult<LibraryState>>
   removeSavedPlaylist(id: string): Promise<IpcResult<LibraryState>>
   syncPlaylist(id: string): Promise<IpcResult<SyncResult>>
+  aiStatus(): Promise<IpcResult<AiStatus>>
+  aiSetKey(key: string): Promise<IpcResult<AiStatus>>
+  aiClearKey(): Promise<IpcResult<AiStatus>>
+  aiListModels(): Promise<IpcResult<AiModel[]>>
+  aiTest(): Promise<IpcResult<AiTestResult>>
+  aiDiscover(req: DiscoverRequest): Promise<IpcResult<DiscoverResult>>
+  aiSummarize(req: InsightRequest): Promise<IpcResult<InsightResult>>
+  aiAsk(req: AskRequest): Promise<IpcResult<InsightResult>>
+  aiOrganize(requestId: string): Promise<IpcResult<OrganizeResult>>
+  aiCancel(requestId: string): Promise<IpcResult<true>>
+  aiTaste(): Promise<IpcResult<TasteProfile>>
+  aiTasteUpdate(action: TasteAction): Promise<IpcResult<TasteProfile>>
+  onAiProgress(cb: (progress: AiProgress) => void): () => void
   onLibraryState(cb: (state: LibraryState) => void): () => void
   onJobProgress(cb: (payload: JobProgressPayload) => void): () => void
   onToolStatus(cb: (status: UpdateStatus) => void): () => void

@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { Download, FolderCheck, Library, ListVideo, Play, Settings as SettingsIcon } from 'lucide-react'
-import type { AppInfo, TabId } from '@shared/types'
+import { Download, FolderCheck, Library, ListVideo, Play, Settings as SettingsIcon, Sparkles } from 'lucide-react'
+import type { AiStatus, AppInfo, TabId } from '@shared/types'
 import { StatusDot } from './common'
 
 const NAV: { id: TabId; label: string; icon: ReactNode }[] = [
+  { id: 'discover', label: 'Discover', icon: <Sparkles size={17} /> },
   { id: 'stream', label: 'Stream', icon: <Play size={17} /> },
   { id: 'download', label: 'Download', icon: <Download size={17} /> },
   { id: 'library', label: 'Library', icon: <Library size={17} /> },
@@ -20,6 +21,7 @@ export default function Sidebar({
   playlistCount,
   toolBusy,
   ytdlpUpdate,
+  aiStatus,
 }: {
   tab: TabId
   onTab: (tab: TabId) => void
@@ -29,6 +31,7 @@ export default function Sidebar({
   playlistCount: number
   toolBusy: boolean
   ytdlpUpdate: boolean
+  aiStatus: AiStatus | null
 }): ReactNode {
   return (
     <aside className="sidebar">
@@ -77,6 +80,13 @@ export default function Sidebar({
           <StatusDot ok={info.ffmpeg.ok} />
           <span className="name">ffmpeg</span>
           <span style={{ marginLeft: 'auto' }}>{info.ffmpeg.version ? 'ok' : 'missing'}</span>
+        </button>
+        <button type="button" className="tool-pill" onClick={() => onTab('settings')} title={aiStatus ? aiStatus.host : ''}>
+          <StatusDot ok={!!aiStatus?.ready} />
+          <span className="name">AI</span>
+          <span style={{ marginLeft: 'auto', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {aiStatus?.ready ? aiStatus.model : 'not set up'}
+          </span>
         </button>
         <button type="button" className="tool-pill" onClick={() => onTab('library')}>
           <FolderCheck size={14} style={{ color: 'var(--text-faint)' }} />

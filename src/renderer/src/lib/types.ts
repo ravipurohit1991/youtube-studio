@@ -8,6 +8,13 @@ export interface DownloadDraft {
   nonce: number
 }
 
+export interface StreamDraft {
+  url: string
+  /** Second to start at (a key moment from an AI summary). */
+  startAt?: number
+  nonce: number
+}
+
 export interface ToastItem {
   id: number
   message: string
