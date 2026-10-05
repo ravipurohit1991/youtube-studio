@@ -22,10 +22,12 @@ function defaults(): Settings {
     cookiesFromBrowser: '',
     filenameTemplate: '%(title)s [%(id)s].%(ext)s',
     lastTab: 'stream',
+    playlistFolders: true,
+    resumePlayback: true,
   }
 }
 
-const VALID_TABS: TabId[] = ['stream', 'download', 'library', 'settings']
+const VALID_TABS: TabId[] = ['stream', 'download', 'library', 'playlists', 'settings']
 
 function coerce(raw: Partial<Settings>): Settings {
   const base = defaults()

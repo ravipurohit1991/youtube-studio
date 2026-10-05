@@ -178,6 +178,22 @@ export default function SettingsTab({
 
         <div className="divider" />
 
+        <div className="row">
+          <label className="check">
+            <input type="checkbox" checked={settings.playlistFolders} onChange={(event) => void onSettingsChange({ playlistFolders: event.target.checked })} />
+            <span>Save playlists in their own folder</span>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={settings.resumePlayback} onChange={(event) => void onSettingsChange({ resumePlayback: event.target.checked })} />
+            <span>Resume videos where I left off</span>
+          </label>
+        </div>
+        <div className="hint" style={{ marginTop: 8 }}>
+          Playlist folders are numbered in playlist order (001 - ..., 002 - ...) and appear in the Playlists tab.
+        </div>
+
+        <div className="divider" />
+
         <Field label="Filename template" hint="yt-dlp template. %(title)s and %(id)s keep names readable and unique.">
           <input
             className="input mono"

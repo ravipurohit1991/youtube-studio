@@ -12,6 +12,7 @@ import { settings } from './settings'
 import { imageProxyUrl } from './media-server'
 import { ffmpegLocation } from './ffmpeg'
 import { baseArgs, buildFormatSelector, cleanError, resolveYtdlp, ytdlpEnv } from './ytdlp'
+import { safeFolderName } from './library-state'
 
 const PROGRESS_PREFIX = '@@P '
 const MAX_HISTORY = 300
@@ -150,6 +151,8 @@ class DownloadManager {
         job.error = 'Interrupted when the app closed'
         job.finishedAt = job.finishedAt ?? nowMs()
       }
+      job.folder = job.folder ?? null
+      job.playlistIndex = job.playlistIndex ?? null
       this.jobs.set(job.id, job)
     })
     log('downloads: restored', this.jobs.size, 'history entries')
@@ -187,8 +190,10 @@ class DownloadManager {
       outputPath: null,
       error: null,
       stage: 'Waiting in queue',
+      folder: safeFolderName(req.folder),
+      playlistIndex: req.folder && req.playlistIndex ? req.playlistIndex : null,
       logTail: '',
-      createdAt: nowMs(),
+      createdAt: this.nextCreatedAt(),
       startedAt: null,
       finishedAt: null,
     }
@@ -198,6 +203,14 @@ class DownloadManager {
     this.emit(job)
     this.pump()
     return job
+  }
+
+  private lastCreated = 0
+
+  /** Strictly increasing, so a playlist queued in one go downloads in playlist order. */
+  private nextCreatedAt(): number {
+    this.lastCreated = Math.max(nowMs(), this.lastCreated + 1)
+    return this.lastCreated
   }
 
   createMany(reqs: DownloadRequest[]): DownloadJob[] {
@@ -425,6 +438,14 @@ class DownloadManager {
     })
   }
 
+  /** Playlist downloads go into their own folder, numbered so the folder lists in playlist order. */
+  private outputTemplate(job: DownloadJob): string {
+    const template = settings.get('filenameTemplate')
+    if (!job.folder) return template
+    const prefix = job.playlistIndex ? String(job.playlistIndex).padStart(3, '0') + ' - ' : ''
+    return (job.folder + '/' + prefix).replace(/%/g, '%%') + template
+  }
+
   /** Scratch file where yt-dlp reports the exact path it finished writing. */
   private pathFileFor(job: DownloadJob): string {
     return join(tmpdir(), 'ytd-studio-' + job.id + '.path')
@@ -455,7 +476,7 @@ class DownloadManager {
       '-P',
       dir,
       '-o',
-      settings.get('filenameTemplate'),
+      this.outputTemplate(job),
       '-f',
       selector,
     ]

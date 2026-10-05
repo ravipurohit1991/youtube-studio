@@ -3,17 +3,19 @@ import {
   ClipboardPaste,
   Download,
   FolderOpen,
+  FolderSync,
   Info,
   Layers,
   ListVideo,
   Loader2,
+  RefreshCw,
   RotateCcw,
   Search,
   Trash2,
   TriangleAlert,
   X,
 } from 'lucide-react'
-import type { DownloadJob, DownloadMode, DownloadRequest, LibraryItem, Settings, VideoMeta } from '@shared/types'
+import type { DownloadJob, DownloadMode, DownloadRequest, LibraryState, SavedPlaylist, Settings, VideoMeta } from '@shared/types'
 import { errorMessage, unwrap } from '../lib/api'
 import { formatBytes, formatCount, formatDuration, timeAgo } from '../lib/format'
 import type { DownloadDraft, ToastTone } from '../lib/types'
@@ -29,11 +31,15 @@ interface Props {
   ffmpegBusy: boolean
   onInstallFfmpeg: () => Promise<void>
   draft: DownloadDraft | null
+  libState: LibraryState
+  syncing: string[]
+  onSync: (playlist: SavedPlaylist) => void
+  onSyncAll: () => void
 }
 
 const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'wav', 'flac'] as const
 
-export default function DownloadTab({ settings, jobs, pushToast, onSettingsChange, ytdlpReady, ffmpegOk, ffmpegBusy, onInstallFfmpeg, draft }: Props): ReactNode {
+export default function DownloadTab({ settings, jobs, pushToast, onSettingsChange, ytdlpReady, ffmpegOk, ffmpegBusy, onInstallFfmpeg, draft, libState, syncing, onSync, onSyncAll }: Props): ReactNode {
   const [url, setUrl] = useState('')
   const [batchMode, setBatchMode] = useState(false)
   const [batchText, setBatchText] = useState('')
@@ -48,6 +54,8 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
   const [writeThumbs, setWriteThumbs] = useState(settings.writeThumbnails)
   const [writeInfo, setWriteInfo] = useState(settings.writeMetadata)
   const [queueFilter, setQueueFilter] = useState<'active' | 'history'>('active')
+  const [useFolder, setUseFolder] = useState(settings.playlistFolders)
+  const [keepSynced, setKeepSynced] = useState(true)
   const seeded = useRef(false)
   const handledDraft = useRef(0)
 
@@ -61,6 +69,7 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
     setSubLangs(settings.subtitleLanguages)
     setWriteThumbs(settings.writeThumbnails)
     setWriteInfo(settings.writeMetadata)
+    setUseFolder(settings.playlistFolders)
   }, [settings])
 
   const analyze = useCallback(
@@ -76,8 +85,7 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
         const result = await unwrap(window.api.probe(value))
         setMeta(result)
         if (result.isPlaylist) {
-          const ids = result.entries.map((entry) => entry.id)
-          setSelected(new Set(ids.length <= 25 ? ids : ids.slice(0, 10)))
+          setSelected(new Set(result.entries.map((entry) => entry.id)))
           pushToast('Playlist detected: ' + result.entryCount + ' videos.', 'info')
         } else {
           setSelected(new Set())
@@ -139,25 +147,47 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
     }
   }, [batchText, buildRequest, pushToast])
 
-  const startSingle = useCallback(async () => {
+  const startSingle = useCallback(async (everything = false) => {
     if (!meta) return
     try {
       let requests: DownloadRequest[]
       if (meta.isPlaylist) {
-        const chosen = meta.entries.filter((entry) => selected.has(entry.id))
-        if (!chosen.length) {
+        const picked = meta.entries.map((entry, index) => ({ entry, index })).filter(({ entry }) => everything || selected.has(entry.id))
+        if (!picked.length) {
           pushToast('Pick at least one video from the playlist.', 'error')
           return
         }
-        requests = chosen.map((entry) =>
+        if (everything) setSelected(new Set(meta.entries.map((entry) => entry.id)))
+        const folder = useFolder ? meta.playlistTitle ?? meta.title : null
+        requests = picked.map(({ entry, index }) =>
           buildRequest(entry.url, {
             videoId: entry.id,
             title: entry.title,
             uploader: entry.uploader,
             thumbnail: entry.thumbnail,
             duration: entry.duration,
+            folder,
+            playlistIndex: index + 1,
           }),
         )
+        if (keepSynced) {
+          // Whatever was left unticked now is not fetched by a later sync either.
+          await unwrap(
+            window.api.savePlaylist({
+              id: meta.id || meta.url,
+              url: meta.url,
+              title: meta.title,
+              folder,
+              mode,
+              height: mode === 'audio_only' ? null : height,
+              audioFormat,
+              thumbnail: meta.thumbnail,
+              knownIds: meta.entries.map((entry) => entry.id),
+              lastSync: Date.now(),
+              lastAdded: picked.length,
+            }),
+          )
+        }
       } else {
         requests = [
           buildRequest(meta.url, {
@@ -171,11 +201,11 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
       }
       await unwrap(window.api.createJobs(requests))
       setQueueFilter('active')
-      pushToast(requests.length + ' download(s) queued.', 'success')
+      pushToast(requests.length + ' download(s) queued.' + (meta.isPlaylist && keepSynced ? ' Playlist saved: Sync grabs new videos later.' : ''), 'success')
     } catch (err) {
       pushToast(errorMessage(err), 'error')
     }
-  }, [meta, selected, buildRequest, pushToast])
+  }, [meta, selected, buildRequest, pushToast, useFolder, keepSynced, mode, height, audioFormat])
 
   const cancelJob = useCallback(async (id: string) => {
     try {
@@ -422,17 +452,68 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
             ) : null}
           </div>
 
+          {meta.isPlaylist ? (
+            <div className="row" style={{ marginTop: 12 }}>
+              <label className="check">
+                <input type="checkbox" checked={useFolder} onChange={(event) => setUseFolder(event.target.checked)} />
+                <span>Save in a folder named after the playlist (in playlist order)</span>
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={keepSynced} onChange={(event) => setKeepSynced(event.target.checked)} />
+                <span>Keep in sync (Sync later downloads only newly added videos)</span>
+              </label>
+            </div>
+          ) : null}
+
           <div className="row" style={{ marginTop: 18 }}>
-            <button type="button" className="btn primary" onClick={() => void startSingle()} disabled={!ytdlpReady}>
+            {meta.isPlaylist ? (
+              <button type="button" className="btn primary" onClick={() => void startSingle(true)} disabled={!ytdlpReady}>
+                <Download size={15} />
+                <span>Download whole playlist ({meta.entries.length})</span>
+              </button>
+            ) : null}
+            <button type="button" className={meta.isPlaylist ? 'btn' : 'btn primary'} onClick={() => void startSingle()} disabled={!ytdlpReady || (meta.isPlaylist && !selected.size)}>
               <Download size={15} />
-              <span>{mode === 'audio_only' ? 'Download audio' : 'Download video'}</span>
+              <span>{meta.isPlaylist ? 'Download ' + selected.size + ' selected' : mode === 'audio_only' ? 'Download audio' : 'Download video'}</span>
             </button>
             <button type="button" className="btn ghost" onClick={() => { setMeta(null); setSelected(new Set()) }}>
               <X size={15} />
               <span>Clear</span>
             </button>
-            {meta.isPlaylist ? <span className="stat">{selected.size} video(s) will be downloaded one by one.</span> : null}
+            {meta.isPlaylist ? <span className="stat">Videos download one after another (up to {settings.concurrentDownloads} at once).</span> : null}
           </div>
+        </div>
+      ) : null}
+
+      {libState.saved.length ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="row" style={{ marginBottom: 10 }}>
+            <div className="card-title" style={{ margin: 0 }}><FolderSync size={15} /><span>Synced playlists</span></div>
+            <button type="button" className="btn small" style={{ marginLeft: 'auto' }} disabled={!ytdlpReady || syncing.length > 0} onClick={onSyncAll}>
+              <RefreshCw size={14} className={syncing.length ? 'spin' : ''} />
+              <span>Sync all</span>
+            </button>
+          </div>
+          {libState.saved.map((saved) => (
+            <div className="saved-row" key={saved.id}>
+              {saved.thumbnail ? <img className="job-thumb" src={saved.thumbnail} alt="" /> : <div className="job-thumb" />}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="job-title" title={saved.title}>{saved.title}</div>
+                <div className="stat">
+                  {saved.knownIds.length} videos · {saved.mode === 'audio_only' ? saved.audioFormat.toUpperCase() + ' audio' : saved.height ? 'up to ' + saved.height + 'p' : 'best quality'}
+                  {' · synced ' + timeAgo(saved.lastSync)}
+                  {saved.folder ? ' · folder "' + saved.folder + '"' : ''}
+                </div>
+              </div>
+              <button type="button" className="btn small" disabled={!ytdlpReady || syncing.includes(saved.id)} onClick={() => onSync(saved)}>
+                <RefreshCw size={14} className={syncing.includes(saved.id) ? 'spin' : ''} />
+                <span>{syncing.includes(saved.id) ? 'Syncing' : 'Sync'}</span>
+              </button>
+              <button type="button" className="btn small ghost" title="Stop syncing" onClick={() => void window.api.removeSavedPlaylist(saved.id)}>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -462,6 +543,7 @@ export default function DownloadTab({ settings, jobs, pushToast, onSettingsChang
                 {job.thumbnail ? <img className="job-thumb" src={job.thumbnail} alt="" /> : <div className="job-thumb" />}
                 <div style={{ minWidth: 0 }}>
                   <div className="job-title" title={job.title}>{job.title}</div>
+                  {job.folder ? <div className="job-folder">{job.folder}{job.playlistIndex ? ' · #' + job.playlistIndex : ''}</div> : null}
                   {job.stage && job.status !== 'error' ? (
                     <div className={'job-stage' + (job.status === 'processing' ? ' processing' : '')}>
                       {job.status === 'downloading' || job.status === 'processing' ? <Loader2 size={12} className="spin" /> : null}

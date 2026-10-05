@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative, basename } from 'node:path'
+import { extname, join, relative, basename, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import type { LibraryItem, MediaKind } from '@shared/types'
 import { log, logError } from './logger'
@@ -59,7 +59,8 @@ function kindFor(ext: string): MediaKind | null {
 
 function titleFromFilename(name: string): string {
   const withoutExt = name.replace(/\.[a-z0-9]{2,4}$/i, '')
-  return withoutExt.replace(/\s*\[[A-Za-z0-9_-]{6,}\].*$/, '').trim() || withoutExt
+  // "007 - Title [id]" (a playlist download) -> "Title"
+  return withoutExt.replace(/\s*\[[A-Za-z0-9_-]{6,}\].*$/, '').replace(/^\d{1,4} - /, '').trim() || withoutExt
 }
 
 function idFromFilename(name: string): string | null {
@@ -88,7 +89,7 @@ function readInfo(path: string): InfoShape | null {
 }
 
 export async function scanLibrary(): Promise<LibraryItem[]> {
-  const root = settings.get('downloadsDir')
+  const root = resolve(settings.get('downloadsDir'))
   if (!existsSync(root)) return []
   const files: string[] = []
   walk(root, 3, files)
@@ -178,7 +179,9 @@ export async function scanLibrary(): Promise<LibraryItem[]> {
       mediaUrl: mediaUrlForPath(m.full),
       videoId,
       subtitleFiles: side.subs.map(function (s) { return basename(s) }),
-      isPlaylistPart: typeof info?.playlist_index === 'number' || !!info?.playlist_title,
+      isPlaylistPart: typeof info?.playlist_index === 'number' || !!info?.playlist_title || m.dir !== root,
+      key: relative(root, m.full).split(sep).join('/'),
+      folder: m.dir === root ? null : relative(root, m.dir).split(sep).join('/'),
     })
   })
 

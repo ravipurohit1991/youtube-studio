@@ -490,7 +490,7 @@ export function buildFormatSelector(mode: 'video_audio' | 'audio_only', height: 
 }
 
 export async function probe(url: string): Promise<VideoMeta> {
-  const args = [...baseArgs(), '--no-progress', '--no-warnings', '-J', '--flat-playlist', '--playlist-end', '300', '--', url]
+  const args = [...baseArgs(), '--no-progress', '--no-warnings', '-J', '--flat-playlist', '--playlist-end', '2000', '--', url]
   const info = await runJson(args, 90000)
   const type = str(info._type)
   if (type === 'playlist' || type === 'multi_video') {

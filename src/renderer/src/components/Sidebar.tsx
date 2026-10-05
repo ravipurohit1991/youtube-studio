@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Download, FolderCheck, Library, Play, Settings as SettingsIcon } from 'lucide-react'
+import { Download, FolderCheck, Library, ListVideo, Play, Settings as SettingsIcon } from 'lucide-react'
 import type { AppInfo, TabId } from '@shared/types'
 import { StatusDot } from './common'
 
@@ -7,6 +7,7 @@ const NAV: { id: TabId; label: string; icon: ReactNode }[] = [
   { id: 'stream', label: 'Stream', icon: <Play size={17} /> },
   { id: 'download', label: 'Download', icon: <Download size={17} /> },
   { id: 'library', label: 'Library', icon: <Library size={17} /> },
+  { id: 'playlists', label: 'Playlists', icon: <ListVideo size={17} /> },
   { id: 'settings', label: 'Settings', icon: <SettingsIcon size={17} /> },
 ]
 
@@ -16,6 +17,7 @@ export default function Sidebar({
   info,
   activeDownloads,
   libraryCount,
+  playlistCount,
   toolBusy,
   ytdlpUpdate,
 }: {
@@ -24,6 +26,7 @@ export default function Sidebar({
   info: AppInfo
   activeDownloads: number
   libraryCount: number
+  playlistCount: number
   toolBusy: boolean
   ytdlpUpdate: boolean
 }): ReactNode {
@@ -35,7 +38,7 @@ export default function Sidebar({
         </div>
         <div className="brand-text">
           <strong>YTD Studio</strong>
-          <span>stream · download · library</span>
+          <span>watch · download · organize</span>
         </div>
       </div>
 
@@ -54,6 +57,9 @@ export default function Sidebar({
             ) : null}
             {entry.id === 'library' && libraryCount > 0 ? (
               <span className="badge chip">{libraryCount}</span>
+            ) : null}
+            {entry.id === 'playlists' && playlistCount > 0 ? (
+              <span className="badge chip">{playlistCount}</span>
             ) : null}
           </button>
         ))}

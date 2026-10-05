@@ -1,6 +1,6 @@
 /** Shared types used by the main process, preload bridge and renderer UI. */
 
-export type TabId = 'stream' | 'download' | 'library' | 'settings'
+export type TabId = 'stream' | 'download' | 'library' | 'playlists' | 'settings'
 export type DownloadMode = 'video_audio' | 'audio_only'
 export type AudioFormat = 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac'
 export type AudioQuality = '0' | '2' | '5'
@@ -79,6 +79,9 @@ export interface DownloadJob {
   error: string | null
   /** Human readable step, e.g. "Downloading video stream", "Merging video and audio". */
   stage: string | null
+  /** Playlist downloads: the subfolder they are saved in, and their position in the playlist. */
+  folder: string | null
+  playlistIndex: number | null
   logTail: string
   createdAt: number
   startedAt: number | null
@@ -100,6 +103,10 @@ export interface DownloadRequest {
   subtitleLanguages?: string
   writeThumbnails?: boolean
   writeMetadata?: boolean
+  /** Save into this subfolder of the downloads folder (playlist downloads). */
+  folder?: string | null
+  /** 1-based position in the playlist; prefixes the file name so the folder keeps playlist order. */
+  playlistIndex?: number | null
 }
 
 export type MediaKind = 'video' | 'audio'
@@ -121,6 +128,53 @@ export interface LibraryItem {
   videoId: string | null
   subtitleFiles: string[]
   isPlaylistPart: boolean
+  /** Stable id for favorites, progress and playlists: the path relative to the downloads folder, with "/". */
+  key: string
+  /** Subfolder of the downloads folder the file is in (a downloaded playlist), or null. */
+  folder: string | null
+}
+
+/** Where playback stopped. watched is set once the end was reached (or by hand). */
+export interface WatchProgress {
+  position: number
+  duration: number
+  updatedAt: number
+  watched: boolean
+}
+
+/** A playlist made in the app. items are library keys, in play order. */
+export interface UserPlaylist {
+  id: string
+  name: string
+  items: string[]
+  createdAt: number
+}
+
+/** A YouTube playlist kept in sync: Sync downloads only videos added since last time. */
+export interface SavedPlaylist {
+  id: string
+  url: string
+  title: string
+  folder: string | null
+  mode: DownloadMode
+  height: number | null
+  audioFormat: AudioFormat
+  thumbnail: string | null
+  knownIds: string[]
+  lastSync: number
+  lastAdded: number
+}
+
+export interface LibraryState {
+  favorites: string[]
+  progress: Record<string, WatchProgress>
+  playlists: UserPlaylist[]
+  saved: SavedPlaylist[]
+}
+
+export interface SyncResult {
+  title: string
+  added: number
 }
 
 export interface Settings {
@@ -141,6 +195,10 @@ export interface Settings {
   cookiesFromBrowser: BrowserName
   filenameTemplate: string
   lastTab: TabId
+  /** Playlist downloads go into a subfolder named after the playlist, numbered in playlist order. */
+  playlistFolders: boolean
+  /** Start library items where they were left off. */
+  resumePlayback: boolean
 }
 
 export interface ToolStatus {
@@ -270,6 +328,20 @@ export interface DesktopApi {
   openBinFolder(): Promise<IpcResult<true>>
   openFfmpegDownload(): Promise<IpcResult<true>>
   pickFile(defaultPath?: string): Promise<IpcResult<string | null>>
+  getLibraryState(): Promise<IpcResult<LibraryState>>
+  toggleFavorite(key: string): Promise<IpcResult<LibraryState>>
+  saveProgress(key: string, position: number, duration: number): Promise<IpcResult<true>>
+  setWatched(key: string, watched: boolean): Promise<IpcResult<LibraryState>>
+  createPlaylist(name: string, items?: string[]): Promise<IpcResult<UserPlaylist>>
+  renamePlaylist(id: string, name: string): Promise<IpcResult<LibraryState>>
+  deletePlaylist(id: string): Promise<IpcResult<LibraryState>>
+  addToPlaylist(id: string, keys: string[]): Promise<IpcResult<LibraryState>>
+  removeFromPlaylist(id: string, key: string): Promise<IpcResult<LibraryState>>
+  movePlaylistItem(id: string, from: number, to: number): Promise<IpcResult<LibraryState>>
+  savePlaylist(playlist: SavedPlaylist): Promise<IpcResult<LibraryState>>
+  removeSavedPlaylist(id: string): Promise<IpcResult<LibraryState>>
+  syncPlaylist(id: string): Promise<IpcResult<SyncResult>>
+  onLibraryState(cb: (state: LibraryState) => void): () => void
   onJobProgress(cb: (payload: JobProgressPayload) => void): () => void
   onToolStatus(cb: (status: UpdateStatus) => void): () => void
 }

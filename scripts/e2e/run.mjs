@@ -166,11 +166,11 @@ try {
   // ---- Stream
   await page.click('button.nav-item:has-text("Stream")')
   await page.fill('input[placeholder="https://www.youtube.com/watch?v=..."]', 'https://www.youtube.com/watch?v=abc123def45')
-  await page.click('button:has-text("Play")')
-  await page.waitForSelector('.video-frame video', { timeout: 20000 })
+  await page.click('[data-tab="stream"] button:has-text("Play")')
+  await page.waitForSelector('[data-tab="stream"] .video-frame video', { timeout: 20000 })
   const played = await page.evaluate(async () => {
-    const v = document.querySelector('.video-frame video')
-    const a = document.querySelector('.video-frame audio')
+    const v = document.querySelector('[data-tab="stream"] .video-frame video')
+    const a = document.querySelector('[data-tab="stream"] .video-frame audio')
     v.muted = true
     try {
       await v.play()
@@ -187,6 +187,100 @@ try {
   check('HLS-only 1080p rendition skipped for the player', !chips.some((c) => /1080/.test(c)))
   const upstream = readFileSync(serverLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   check('media host saw only bounded ranges with client headers', upstream.length > 0 && upstream.every((r) => /^bytes=\d+-\d+$/.test(r.range) && r.check === 'visionos'))
+
+  // ---- Whole playlist: one click, own folder, playlist order, kept in sync
+  await page.click('button.nav-item:has-text("Download")')
+  await page.fill('input[placeholder^="https://www.youtube.com/watch?v=... or"]', 'https://www.youtube.com/playlist?list=PLtest123')
+  await page.click('button:has-text("Analyze")')
+  await page.waitForSelector('h2:has-text("Test Playlist")', { timeout: 20000 })
+  await page.click('button:has-text("Download whole playlist")')
+  const folder = join(dl, 'Test Playlist')
+  const waitFor = async (fn, ms) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < ms) {
+      if (fn()) return true
+      await page.waitForTimeout(250)
+    }
+    return false
+  }
+  const listFolder = () => {
+    try {
+      return readdirSync(folder).filter((f) => /^\d{3} - .*\]\.mp4$/.test(f)).sort()
+    } catch {
+      return []
+    }
+  }
+  const twoSaved = await waitFor(() => listFolder().length >= 2, 40000)
+  console.log('  playlist folder:', listFolder().join(' | '))
+  check('playlist downloads into its own folder', twoSaved)
+  check('playlist files numbered in order', listFolder()[0] === '001 - Test Clip [abc123def45].mp4' && listFolder()[1] === '002 - Second Clip [def456ghi78].mp4')
+  check('playlist is saved for syncing', (await page.locator('.saved-row:has-text("Test Playlist")').count()) === 1)
+
+  await page.click('button.nav-item:has-text("Playlists")')
+  await page.waitForSelector('.pl-item:has-text("Test Playlist")', { timeout: 10000 })
+  await page.click('.pl-item:has-text("Test Playlist")')
+  await page.waitForSelector('.pl-row', { timeout: 10000 })
+  const rows = await page.$$eval('.pl-row .pl-row-title', (els) => els.map((e) => e.textContent))
+  console.log('  playlist rows:', rows.join(' | '))
+  check('Playlists tab lists the playlist in order', rows.length === 2 && rows[0] === 'Test Clip' && rows[1] === 'Second Clip')
+
+  writeFileSync(join(WORK, 'playlist-extra'), '1')
+  await page.click('button:has-text("Sync new videos")')
+  const synced = await waitFor(() => listFolder().length >= 3, 40000)
+  check('sync downloads only the newly added video', synced && listFolder()[2] === '003 - Third Clip [ghi789jkl01].mp4' && listFolder().length === 3)
+
+  // ---- Organize: favorites and a playlist of your own
+  await page.click('button.nav-item:has-text("Library")')
+  await page.click('.toolbar button:has-text("Rescan")')
+  await page.waitForTimeout(1200)
+  const firstCard = page.locator('.lib-card').first()
+  const favTitle = await firstCard.locator('.lib-name').textContent()
+  await firstCard.hover()
+  await firstCard.locator('.fav-btn').click()
+  await page.waitForTimeout(400)
+  await page.click('.segmented button:has-text("Favorites")')
+  await page.waitForTimeout(300)
+  const favNames = await page.$$eval('.lib-name', (els) => els.map((e) => e.textContent))
+  check('favorite shows under Favorites', favNames.length === 1 && favNames[0] === favTitle)
+  await page.click('.lib-card button[title="Add to playlist"]')
+  await page.fill('.modal input', 'My Mix')
+  await page.click('.modal button:has-text("Create")')
+  await page.waitForTimeout(400)
+  await page.click('button.nav-item:has-text("Playlists")')
+  await page.click('.pl-item:has-text("My Mix")')
+  await page.waitForSelector('.pl-row', { timeout: 5000 })
+  check('own playlist holds the added item', (await page.$$eval('.pl-row .pl-row-title', (els) => els.map((e) => e.textContent))).join() === favTitle)
+
+  // ---- Watch: playback position is remembered and resumed
+  await page.click('.pl-detail button:has-text("Play all")')
+  await page.waitForSelector('.overlay video', { timeout: 10000 })
+  await page.evaluate(async () => {
+    const v = document.querySelector('.overlay video')
+    v.muted = true
+    const t0 = performance.now()
+    while (performance.now() - t0 < 8000 && v.readyState < 1) await new Promise((r) => setTimeout(r, 100))
+    v.currentTime = 9
+    await new Promise((r) => setTimeout(r, 600))
+    v.pause()
+  })
+  await page.waitForTimeout(500)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(1200)
+  await page.click('.pl-detail button:has-text("Play all")')
+  const resumed = await page.waitForSelector('.overlay .chip:has-text("Resumed at")', { timeout: 10000 }).then(() => true, () => false)
+  check('player resumes where it was left off', resumed)
+  await page.keyboard.press('Escape')
+  const stateFile = ['YTD Studio', 'ytd-studio'].map((n) => join(config, n, 'library-state.json')).find((f) => {
+    try {
+      readFileSync(f)
+      return true
+    } catch {
+      return false
+    }
+  })
+  await page.waitForTimeout(1000)
+  const saved = stateFile ? JSON.parse(readFileSync(stateFile, 'utf8')) : null
+  check('favorites, playlists and progress persist to disk', !!saved && saved.favorites.length === 1 && saved.playlists.length === 1 && Object.values(saved.progress).some((p) => p.position > 5))
 
   // ---- yt-dlp invocation
   const calls = readFileSync(join(WORK, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.args[0] !== '--version')

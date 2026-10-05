@@ -1,7 +1,7 @@
 {
   "name": "ytd-studio",
   "productName": "YTD Studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Desktop app to stream YouTube ad-free and download video or audio. Electron + TypeScript + React.",
   "author": "YTD Studio",
   "license": "MIT",

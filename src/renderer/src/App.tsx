@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Download, RefreshCw, TriangleAlert } from 'lucide-react'
-import type { AppInfo, DownloadJob, DownloadMode, LibraryItem, Settings, TabId, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
+import type { AppInfo, DownloadJob, DownloadMode, LibraryItem, LibraryState, SavedPlaylist, Settings, TabId, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
+import AddToPlaylist from './components/AddToPlaylist'
+import PlaylistsTab from './components/PlaylistsTab'
 import DownloadTab from './components/DownloadTab'
 import LibraryTab from './components/LibraryTab'
 import PlayerOverlay from './components/PlayerOverlay'
@@ -9,12 +11,14 @@ import Sidebar from './components/Sidebar'
 import StreamTab from './components/StreamTab'
 import Toasts from './components/Toasts'
 import { errorMessage, unwrap } from './lib/api'
-import type { DownloadDraft, PlayerModel, ToastItem, ToastTone } from './lib/types'
+import { makeQueue, stepped, withShuffle } from './lib/queue'
+import type { DownloadDraft, PlayQueue, ToastItem, ToastTone } from './lib/types'
 
 const TAB_TITLES: Record<TabId, { title: string; sub: string }> = {
   stream: { title: 'Stream', sub: 'Play a YouTube link right here — no ads, no popups.' },
   download: { title: 'Download', sub: 'Save the whole video (with audio) or just the audio.' },
-  library: { title: 'Library', sub: 'Everything in your downloads folder, ready to play.' },
+  library: { title: 'Library', sub: 'Everything you downloaded: pick up where you left off, favorite, sort into playlists.' },
+  playlists: { title: 'Playlists', sub: 'Downloaded YouTube playlists (kept in sync if you like) and playlists you made.' },
   settings: { title: 'Settings', sub: 'Folders, quality defaults and the tools behind the app.' },
 }
 
@@ -45,10 +49,11 @@ export default function App(): ReactNode {
   const [installing, setInstalling] = useState(false)
   const [installingFfmpeg, setInstallingFfmpeg] = useState(false)
   const [updateInfo, setUpdateInfo] = useState<YtdlpUpdateInfo | null>(null)
-  const [player, setPlayer] = useState<PlayerModel | null>(null)
+  const [playQueue, setPlayQueue] = useState<PlayQueue | null>(null)
   const [draft, setDraft] = useState<DownloadDraft | null>(null)
-  const [queue, setQueue] = useState<LibraryItem[]>([])
-  const [queuePos, setQueuePos] = useState(-1)
+  const [libState, setLibState] = useState<LibraryState>({ favorites: [], progress: {}, playlists: [], saved: [] })
+  const [addKeys, setAddKeys] = useState<string[] | null>(null)
+  const [syncing, setSyncing] = useState<string[]>([])
   const toastId = useRef(0)
   const lastDir = useRef('')
 
@@ -111,8 +116,13 @@ export default function App(): ReactNode {
     let cancelled = false
     const boot = async (): Promise<void> => {
       try {
-        const [appInfo, jobList] = await Promise.all([unwrap(window.api.getAppInfo()), unwrap(window.api.listJobs())])
+        const [appInfo, jobList, state] = await Promise.all([
+          unwrap(window.api.getAppInfo()),
+          unwrap(window.api.listJobs()),
+          unwrap(window.api.getLibraryState()),
+        ])
         if (cancelled) return
+        setLibState(state)
         setInfo(appInfo)
         setSettings(appInfo.settings)
         setTab(appInfo.settings.lastTab)
@@ -138,6 +148,7 @@ export default function App(): ReactNode {
       })
       if (payload.job.status === 'completed') setLibraryStale(true)
     })
+    const offLib = window.api.onLibraryState((state) => setLibState(state))
     let clearTimer = 0
     const offTool = window.api.onToolStatus((status) => {
       setToolUpdate(status)
@@ -150,13 +161,14 @@ export default function App(): ReactNode {
     })
     return () => {
       off()
+      offLib()
       offTool()
       window.clearTimeout(clearTimer)
     }
   }, [refreshTools])
 
   useEffect(() => {
-    if (tab !== 'library') return
+    if (tab !== 'library' && tab !== 'playlists') return
     if (libraryLoaded && !libraryStale) return
     void scanLibrary()
   }, [tab, libraryLoaded, libraryStale, scanLibrary])
@@ -234,29 +246,37 @@ export default function App(): ReactNode {
     }
   }, [pushToast])
 
-  const playLibraryItem = useCallback((item: LibraryItem, list: LibraryItem[], position: number) => {
-    setQueue(list)
-    setQueuePos(position)
-    setPlayer({
-      title: item.title ?? item.name,
-      subtitle: item.uploader,
-      kind: item.kind,
-      videoUrl: item.kind === 'video' ? item.mediaUrl : null,
-      audioUrl: item.kind === 'audio' ? item.mediaUrl : null,
-      separateAudio: false,
-      absPath: item.absPath,
-      sessionId: null,
-      duration: item.duration,
-    })
+  /** Play list starting at index (-1 with shuffle: a random first item). */
+  const playItems = useCallback((list: LibraryItem[], index: number, shuffle = false) => {
+    if (!list.length) return
+    setPlayQueue((previous) => makeQueue(list, index, shuffle, previous?.repeat ?? 'off'))
   }, [])
 
   const stepQueue = useCallback((delta: number) => {
-    const next = queuePos + delta
-    if (next < 0 || next >= queue.length) return
-    playLibraryItem(queue[next], queue, next)
-  }, [queue, queuePos, playLibraryItem])
+    setPlayQueue((previous) => (previous ? stepped(previous, delta) ?? previous : previous))
+  }, [])
 
-  const closePlayer = useCallback(() => setPlayer(null), [])
+  const closePlayer = useCallback(() => {
+    setPlayQueue(null)
+    // Progress updates while playing are quiet; refresh badges and "continue watching" now.
+    void unwrap(window.api.getLibraryState()).then(setLibState).catch(() => undefined)
+  }, [])
+
+  const syncPlaylist = useCallback(async (playlist: SavedPlaylist) => {
+    setSyncing((prev) => (prev.includes(playlist.id) ? prev : [...prev, playlist.id]))
+    try {
+      const result = await unwrap(window.api.syncPlaylist(playlist.id))
+      pushToast(result.added ? result.title + ': ' + result.added + ' new video(s) queued.' : result.title + ' is up to date.', result.added ? 'success' : 'info')
+    } catch (err) {
+      pushToast('Sync failed for ' + playlist.title + ': ' + errorMessage(err), 'error')
+    } finally {
+      setSyncing((prev) => prev.filter((id) => id !== playlist.id))
+    }
+  }, [pushToast])
+
+  const syncAll = useCallback(() => {
+    libState.saved.forEach((playlist) => void syncPlaylist(playlist))
+  }, [libState.saved, syncPlaylist])
 
   const sendToDownload = useCallback((url: string, mode: DownloadMode) => {
     setDraft({ url, mode, nonce: Date.now() })
@@ -289,6 +309,7 @@ export default function App(): ReactNode {
         info={info}
         activeDownloads={activeDownloads}
         libraryCount={library.length}
+        playlistCount={libState.playlists.length + new Set(library.map((item) => item.folder).filter(Boolean)).size}
         toolBusy={installing}
         ytdlpUpdate={!!(updateInfo && updateInfo.updateAvailable)}
       />
@@ -366,6 +387,10 @@ export default function App(): ReactNode {
             ffmpegBusy={ffmpegBusy}
             onInstallFfmpeg={installFfmpeg}
             draft={draft}
+            libState={libState}
+            syncing={syncing}
+            onSync={(playlist) => void syncPlaylist(playlist)}
+            onSyncAll={syncAll}
           />
         </TabPanel>
         <TabPanel id="library" active={tab === 'library'}>
@@ -373,10 +398,24 @@ export default function App(): ReactNode {
             items={library}
             busy={libraryBusy}
             settings={settings}
+            libState={libState}
             pushToast={pushToast}
             onRescan={() => void scanLibrary()}
-            onPlay={playLibraryItem}
+            onPlay={playItems}
+            onAddToPlaylist={setAddKeys}
             onSettingsChange={updateSettings}
+          />
+        </TabPanel>
+        <TabPanel id="playlists" active={tab === 'playlists'}>
+          <PlaylistsTab
+            items={library}
+            libState={libState}
+            settings={settings}
+            syncing={syncing}
+            pushToast={pushToast}
+            onPlay={playItems}
+            onAddToPlaylist={setAddKeys}
+            onSync={(playlist) => void syncPlaylist(playlist)}
           />
         </TabPanel>
         <TabPanel id="settings" active={tab === 'settings'}>
@@ -397,22 +436,22 @@ export default function App(): ReactNode {
         </TabPanel>
       </div>
 
-      {player ? (
+      {playQueue ? (
         <PlayerOverlay
-          model={player}
+          queue={playQueue}
+          libState={libState}
+          resume={settings.resumePlayback}
           onClose={closePlayer}
-          onPrev={() => stepQueue(-1)}
-          onNext={() => stepQueue(1)}
-          hasPrev={queuePos > 0}
-          hasNext={queuePos >= 0 && queuePos < queue.length - 1}
-          onReveal={() => {
-            if (player.absPath) void window.api.revealPath(player.absPath)
-          }}
-          onOpenExternal={() => {
-            if (player.absPath) void window.api.openPath(player.absPath)
-          }}
+          onStep={stepQueue}
+          onJump={(pos) => setPlayQueue((previous) => (previous ? { ...previous, pos } : previous))}
+          onShuffle={(on) => setPlayQueue((previous) => (previous ? withShuffle(previous, on) : previous))}
+          onRepeat={(repeat) => setPlayQueue((previous) => (previous ? { ...previous, repeat } : previous))}
+          onToggleFavorite={(key) => void window.api.toggleFavorite(key)}
+          onAddToPlaylist={(key) => setAddKeys([key])}
         />
       ) : null}
+
+      {addKeys ? <AddToPlaylist state={libState} keys={addKeys} onClose={() => setAddKeys(null)} pushToast={pushToast} /> : null}
 
       <Toasts items={toasts} onDismiss={dismissToast} />
     </div>

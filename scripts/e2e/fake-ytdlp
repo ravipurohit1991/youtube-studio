@@ -24,6 +24,16 @@ INFO = {'id': 'abc123def45', 'title': 'Test Clip', 'uploader': 'Tester', 'durati
         'formats': FORMATS, 'extractor_key': 'Youtube'}
 def opt(name):
     return args[args.index(name) + 1] if name in args else None
+url = args[-1]
+TITLES = {'abc123def45': 'Test Clip', 'def456ghi78': 'Second Clip', 'ghi789jkl01': 'Third Clip'}
+if '-J' in args and 'list=' in url:
+    ids = ['abc123def45', 'def456ghi78']
+    # The test drops this file to simulate a video being added to the playlist later.
+    if os.path.exists(os.path.join(here, 'playlist-extra')): ids.append('ghi789jkl01')
+    entries = [{'id': i, 'title': TITLES[i], 'url': 'https://www.youtube.com/watch?v=' + i, 'duration': 20,
+                'thumbnails': [{'url': 'https://i.ytimg.com/vi/%s/hqdefault.jpg' % i}]} for i in ids]
+    print(json.dumps({'_type': 'playlist', 'id': 'PLtest123', 'title': 'Test Playlist', 'uploader': 'Tester',
+                      'entries': entries, 'extractor_key': 'YoutubeTab'})); sys.exit(0)
 if '-J' in args:
     print(json.dumps(INFO)); sys.exit(0)
 if '-j' in args:
@@ -38,12 +48,16 @@ if '-j' in args:
 out_dir = opt('-P'); pathfile = None
 if '--print-to-file' in args:
     i = args.index('--print-to-file'); pathfile = args[i + 2]
-stem = os.path.join(out_dir, 'Test Clip [abc123def45]')
+vid = url.split('v=')[-1] if 'v=' in url else 'abc123def45'
+title = TITLES.get(vid, 'Test Clip')
+name = (opt('-o') or '%(title)s [%(id)s].%(ext)s').replace('%(title)s', title).replace('%(id)s', vid).replace('%%', '%')
+stem = os.path.join(out_dir, name.replace('.%(ext)s', ''))
+os.makedirs(os.path.dirname(stem), exist_ok=True)
 audio_only = '-x' in args
 def say(s): print(s, flush=True)
-say('[youtube] Extracting URL: https://www.youtube.com/watch?v=abc123def45')
-say('[youtube] abc123def45: Downloading webpage'); time.sleep(0.8)
-say('[info] abc123def45: Downloading 1 format(s): ' + ('140' if audio_only else '134+140')); time.sleep(0.5)
+say('[youtube] Extracting URL: https://www.youtube.com/watch?v=' + vid)
+say('[youtube] %s: Downloading webpage' % vid); time.sleep(0.8)
+say('[info] %s: Downloading 1 format(s): ' % vid + ('140' if audio_only else '134+140')); time.sleep(0.5)
 parts = [('.f140.m4a', 'audio.m4a', 180000)] if audio_only else [('.f134.mp4', 'video.mp4', 900000), ('.f140.m4a', 'audio.m4a', 180000)]
 for suffix, src, total in parts:
     say('[download] Destination: ' + stem + suffix)
