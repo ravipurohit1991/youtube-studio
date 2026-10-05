@@ -393,8 +393,13 @@ try {
   check('disliked suggestions feed back into the profile', !!refineCall && refineCall.body.messages[1].content.includes(disliked))
 
   // Insights on the stream page: streamed summary with clickable key moments, then a question.
+  // The Stream tab stays mounted, so the earlier test's <video> is still there: wait for a new stream session.
+  const oldSrc = await page.evaluate(() => document.querySelector('[data-tab="stream"] .video-frame video')?.src ?? '')
   await page.locator('.disc-card').first().locator('button:has-text("Play")').click()
-  await page.waitForSelector('[data-tab="stream"] .video-frame video', { timeout: 20000 })
+  await page.waitForFunction((old) => {
+    const v = document.querySelector('[data-tab="stream"] .video-frame video')
+    return !!v && v.src !== old && !document.querySelector('[data-tab="stream"] .loading-row')
+  }, oldSrc, { timeout: 20000 })
   await page.evaluate(() => { document.querySelector('[data-tab="stream"] .video-frame video').muted = true })
   await page.click('[data-tab="stream"] .ai-card button:has-text("Summarize")')
   const summarized = await page.waitForSelector('[data-tab="stream"] .ai-summary .stamp:has-text("00:12")', { timeout: 20000 }).then(() => true, () => false)
