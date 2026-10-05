@@ -108,7 +108,7 @@ class DownloadService : Service() {
         val work = File(filesDir, "work/${job.id}")
         var lastWrite = 0L
         try {
-            val file = Engine.download(job.id, job.url, job.mode, job.height, job.audioFormat, work, object : Engine.Listener {
+            val file = Engine.download(job.id, job.url, job.mode, job.height, job.audioFormat, work, filePrefix = job.filePrefix, listener = object : Engine.Listener {
                 override fun onProgress(p: Engine.Progress) {
                     val now = System.currentTimeMillis()
                     if (now - lastWrite < 300) return
@@ -141,17 +141,18 @@ class DownloadService : Service() {
             })
             if (job.id in canceled) throw YoutubeDL.CanceledException()
             val video = MediaLibrary.isVideoFile(file.name)
-            store.update(job.id) { it.copy(status = JobStatus.SAVING, stage = "Saving to " + MediaLibrary.folderLabel(video), percent = 99.5f) }
-            val uri = MediaLibrary.save(this, file)
+            val place = MediaLibrary.folderLabel(video) + (MediaLibrary.safeFolder(job.folder)?.let { "/$it" } ?: "")
+            store.update(job.id) { it.copy(status = JobStatus.SAVING, stage = "Saving to $place", percent = 99.5f) }
+            val uri = MediaLibrary.save(this, file, job.folder)
             store.update(job.id) {
                 it.copy(
-                    status = JobStatus.COMPLETED, stage = "Saved to " + MediaLibrary.folderLabel(video), percent = 100f, speed = null, eta = null,
+                    status = JobStatus.COMPLETED, stage = "Saved to $place", percent = 100f, speed = null, eta = null,
                     outputUri = uri.toString(), outputName = file.name, totalBytes = file.length(), downloadedBytes = file.length(),
                     title = if (it.title == it.url) MediaLibrary.cleanTitle(file.name) else it.title,
                     finishedAt = System.currentTimeMillis(),
                 )
             }
-            Notifications.finished(this, job.id, store.get(job.id)?.title ?: job.title, true, "Saved to " + MediaLibrary.folderLabel(video) + ". Tap to play.", uri)
+            Notifications.finished(this, job.id, store.get(job.id)?.title ?: job.title, true, "Saved to $place. Tap to play.", uri, video)
         } catch (e: Throwable) {
             val wasCanceled = job.id in canceled || e is YoutubeDL.CanceledException || e is kotlinx.coroutines.CancellationException
             if (!wasCanceled) Log.e(TAG, "download failed", e)

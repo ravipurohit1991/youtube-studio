@@ -23,6 +23,11 @@ data class DownloadRequest(
     val uploader: String? = null,
     val thumbnail: String? = null,
     val duration: Double? = null,
+    val videoId: String? = null,
+    /** Set for playlist downloads: the file is saved in a subfolder with this name. */
+    val folder: String? = null,
+    /** 1-based position in the playlist; prefixes the file name so the folder keeps playlist order. */
+    val playlistIndex: Int? = null,
 )
 
 data class DownloadJob(
@@ -35,6 +40,9 @@ data class DownloadJob(
     val uploader: String?,
     val thumbnail: String?,
     val duration: Double?,
+    val videoId: String? = null,
+    val folder: String? = null,
+    val playlistIndex: Int? = null,
     val status: JobStatus = JobStatus.QUEUED,
     val percent: Float = 0f,
     val downloadedBytes: Long = 0,
@@ -57,6 +65,10 @@ data class DownloadJob(
             DownloadMode.VIDEO -> if (height > 0) "Video up to ${height}p" else "Video, best quality"
         }
 
+    /** "007 - " for the 7th video of a playlist download, so files sort in playlist order. */
+    val filePrefix: String
+        get() = if (folder != null && playlistIndex != null) "%03d - ".format(playlistIndex) else ""
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("url", url)
@@ -67,6 +79,9 @@ data class DownloadJob(
         put("uploader", uploader)
         put("thumbnail", thumbnail)
         put("duration", duration)
+        put("videoId", videoId)
+        put("folder", folder)
+        put("playlistIndex", playlistIndex)
         put("status", status.name)
         put("percent", percent.toDouble())
         put("downloadedBytes", downloadedBytes)
@@ -90,6 +105,9 @@ data class DownloadJob(
             uploader = o.optStringOrNull("uploader"),
             thumbnail = o.optStringOrNull("thumbnail"),
             duration = if (o.isNull("duration")) null else o.optDouble("duration"),
+            videoId = o.optStringOrNull("videoId"),
+            folder = o.optStringOrNull("folder"),
+            playlistIndex = if (o.has("playlistIndex") && !o.isNull("playlistIndex")) o.optInt("playlistIndex") else null,
             status = runCatching { JobStatus.valueOf(o.getString("status")) }.getOrDefault(JobStatus.FAILED),
             percent = o.optDouble("percent", 0.0).toFloat(),
             downloadedBytes = o.optLong("downloadedBytes", 0),

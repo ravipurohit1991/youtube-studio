@@ -41,6 +41,17 @@ class JobStore(context: Context) {
 
     fun get(id: String): DownloadJob? = state.value.firstOrNull { it.id == id }
 
+    fun addAll(reqs: List<DownloadRequest>): List<DownloadJob> = reqs.map { add(it) }
+
+    private var lastCreated = 0L
+
+    /** Strictly increasing, so a playlist queued in one go downloads in playlist order. */
+    @Synchronized
+    private fun nextCreatedAt(): Long {
+        lastCreated = maxOf(System.currentTimeMillis(), lastCreated + 1)
+        return lastCreated
+    }
+
     fun add(req: DownloadRequest): DownloadJob {
         val job = DownloadJob(
             id = UUID.randomUUID().toString(),
@@ -52,6 +63,10 @@ class JobStore(context: Context) {
             uploader = req.uploader,
             thumbnail = req.thumbnail,
             duration = req.duration,
+            videoId = req.videoId,
+            folder = req.folder,
+            playlistIndex = req.playlistIndex,
+            createdAt = nextCreatedAt(),
         )
         state.update { listOf(job) + it }
         persist()
@@ -66,7 +81,7 @@ class JobStore(context: Context) {
     fun retry(id: String) = update(id) {
         if (it.status.isActive) it else it.copy(
             status = JobStatus.QUEUED, percent = 0f, downloadedBytes = 0, totalBytes = 0, speed = null, eta = null,
-            error = null, stage = "Waiting in queue", log = "", outputUri = null, outputName = null, finishedAt = null, createdAt = System.currentTimeMillis(),
+            error = null, stage = "Waiting in queue", log = "", outputUri = null, outputName = null, finishedAt = null, createdAt = nextCreatedAt(),
         )
     }
 

@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
 data class Settings(
     val defaultMode: DownloadMode = DownloadMode.VIDEO,
     /** 0 = best available. 1080 keeps H.264, which every phone decodes in hardware. */
@@ -13,6 +15,17 @@ data class Settings(
     val audioFormat: String = "m4a",
     val autoUpdateYtdlp: Boolean = true,
     val concurrentDownloads: Int = 2,
+    /** Playlist downloads go into their own subfolder, which the Library shows as a playlist. */
+    val playlistFolders: Boolean = true,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /** Material You colors from the wallpaper (Android 12+) instead of the app's own palette. */
+    val dynamicColor: Boolean = false,
+    /** Start where you left off. */
+    val resumePlayback: Boolean = true,
+    /** Videos keep playing (as audio) when you leave the player. Audio always does. */
+    val backgroundVideo: Boolean = false,
+    /** Leaving the player while a video plays shrinks it into a floating window. */
+    val pictureInPicture: Boolean = true,
 )
 
 class Prefs(context: Context) {
@@ -32,6 +45,12 @@ class Prefs(context: Context) {
             audioFormat = sp.getString("audioFormat", d.audioFormat)!!.takeIf { it in AUDIO_FORMATS } ?: d.audioFormat,
             autoUpdateYtdlp = sp.getBoolean("autoUpdateYtdlp", d.autoUpdateYtdlp),
             concurrentDownloads = sp.getInt("concurrentDownloads", d.concurrentDownloads).coerceIn(1, 3),
+            playlistFolders = sp.getBoolean("playlistFolders", d.playlistFolders),
+            themeMode = runCatching { ThemeMode.valueOf(sp.getString("themeMode", d.themeMode.name)!!) }.getOrDefault(d.themeMode),
+            dynamicColor = sp.getBoolean("dynamicColor", d.dynamicColor),
+            resumePlayback = sp.getBoolean("resumePlayback", d.resumePlayback),
+            backgroundVideo = sp.getBoolean("backgroundVideo", d.backgroundVideo),
+            pictureInPicture = sp.getBoolean("pictureInPicture", d.pictureInPicture),
         )
     }
 
@@ -43,6 +62,12 @@ class Prefs(context: Context) {
             .putString("audioFormat", next.audioFormat)
             .putBoolean("autoUpdateYtdlp", next.autoUpdateYtdlp)
             .putInt("concurrentDownloads", next.concurrentDownloads.coerceIn(1, 3))
+            .putBoolean("playlistFolders", next.playlistFolders)
+            .putString("themeMode", next.themeMode.name)
+            .putBoolean("dynamicColor", next.dynamicColor)
+            .putBoolean("resumePlayback", next.resumePlayback)
+            .putBoolean("backgroundVideo", next.backgroundVideo)
+            .putBoolean("pictureInPicture", next.pictureInPicture)
             .apply()
         state.value = next
     }

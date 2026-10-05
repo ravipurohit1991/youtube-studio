@@ -1,31 +1,45 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.ytdstudio.android.ui
 
 import android.Manifest
+import android.app.RecoverableSecurityException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -36,16 +50,17 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ytdstudio.android.data.JobStatus
 import com.ytdstudio.android.engine.Engine
 
 class MainActivity : ComponentActivity() {
@@ -56,13 +71,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) handleShare(intent)
-        // Progress and "download finished" notifications (Android 13+ asks once).
+        // Progress, "download finished" and playback notifications (Android 13+ asks once).
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        setContent { YtdTheme { AppScreen(vm) } }
+        setContent {
+            val settings by vm.prefs.settings.collectAsStateWithLifecycle()
+            YtdTheme(settings) { AppScreen(vm) }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Files may have been added or removed elsewhere (Gallery, a file manager) meanwhile.
+        if (vm.libraryLoaded) vm.refreshLibrary()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -75,11 +99,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppScreen(vm: MainViewModel) {
+    val context = LocalContext.current
     val engine by Engine.state.collectAsStateWithLifecycle()
+    val jobs by vm.store.jobs.collectAsStateWithLifecycle()
+    val libraryState by vm.library.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val active = jobs.count { it.status == JobStatus.QUEUED || it.status.isActive }
+    val completed = jobs.count { it.status == JobStatus.COMPLETED }
+
+    LaunchedEffect(completed) { vm.refreshLibrary() }
     LaunchedEffect(vm.message) {
         vm.message?.let {
             snackbar.showSnackbar(it)
@@ -92,44 +122,37 @@ private fun AppScreen(vm: MainViewModel) {
             Engine.clearNotice()
         }
     }
+
+    BackHandler(enabled = vm.openPlaylist != null) { vm.openPlaylist = null }
+    BackHandler(enabled = vm.openPlaylist == null && vm.tab != Tab.HOME) { vm.tab = Tab.HOME }
+
+    // Files from an earlier install belong to "another app" now, so Android asks the user before deleting.
+    val deleteRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { vm.refreshLibrary() }
+
     Scaffold(
-        topBar = {
-            TopAppBar(title = {
-                Column {
-                    Text(
-                        when (vm.tab) {
-                            Tab.DOWNLOAD -> "Download"
-                            Tab.STREAM -> "Stream"
-                            Tab.LIBRARY -> "Library"
-                            Tab.SETTINGS -> "Settings"
-                        },
-                    )
-                    Text(
-                        when (vm.tab) {
-                            Tab.DOWNLOAD -> "Save a video or its audio to your phone"
-                            Tab.STREAM -> "Watch without ads, without saving"
-                            Tab.LIBRARY -> "Your downloads, playable offline"
-                            Tab.SETTINGS -> "Quality defaults and yt-dlp"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            })
-        },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             NavigationBar {
                 listOf(
-                    Triple(Tab.DOWNLOAD, "Download", Icons.Rounded.Download),
-                    Triple(Tab.STREAM, "Stream", Icons.Rounded.PlayCircle),
+                    Triple(Tab.HOME, "Home", Icons.Rounded.Home),
                     Triple(Tab.LIBRARY, "Library", Icons.Rounded.VideoLibrary),
+                    Triple(Tab.DOWNLOADS, "Downloads", Icons.Rounded.Download),
                     Triple(Tab.SETTINGS, "Settings", Icons.Rounded.Settings),
                 ).forEach { (tab, label, icon) ->
                     NavigationBarItem(
                         selected = vm.tab == tab,
-                        onClick = { vm.tab = tab },
-                        icon = { Icon(icon, contentDescription = null) },
+                        onClick = {
+                            if (tab == Tab.LIBRARY && vm.tab == Tab.LIBRARY) vm.openPlaylist = null
+                            vm.tab = tab
+                        },
+                        icon = {
+                            if (tab == Tab.DOWNLOADS && active > 0) {
+                                BadgedBox(badge = { Badge { Text("$active") } }) { Icon(icon, contentDescription = null) }
+                            } else {
+                                Icon(icon, contentDescription = null)
+                            }
+                        },
                         label = { Text(label) },
                     )
                 }
@@ -138,15 +161,53 @@ private fun AppScreen(vm: MainViewModel) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             EngineBanner(engine)
-            Box(Modifier.weight(1f)) {
+            // The banner already sits below the status bar; screens should not pad for it again.
+            val belowBanner = if (engine is Engine.State.Ready) Modifier else Modifier.consumeWindowInsets(WindowInsets.statusBars)
+            Box(Modifier.weight(1f).then(belowBanner)) {
                 when (vm.tab) {
-                    Tab.DOWNLOAD -> DownloadScreen(vm)
-                    Tab.STREAM -> StreamScreen(vm)
+                    Tab.HOME -> HomeScreen(vm)
                     Tab.LIBRARY -> LibraryScreen(vm)
+                    Tab.DOWNLOADS -> DownloadsScreen(vm)
                     Tab.SETTINGS -> SettingsScreen(vm)
                 }
             }
         }
+    }
+
+    if (vm.sheetOpen) LinkSheet(vm)
+
+    vm.addToPlaylist?.let { keys ->
+        AddToPlaylistDialog(vm, libraryState, keys) { vm.addToPlaylist = null }
+    }
+
+    vm.pendingDelete?.let { item ->
+        AlertDialog(
+            onDismissRequest = { vm.pendingDelete = null },
+            title = { Text("Delete this file?") },
+            text = { Text(item.name + "\n\nIt is removed from your phone and from every playlist.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.pendingDelete = null
+                    try {
+                        context.contentResolver.delete(item.uri, null, null)
+                        vm.forgetDeleted(item)
+                    } catch (e: SecurityException) {
+                        val sender = when {
+                            Build.VERSION.SDK_INT >= 30 -> MediaStore.createDeleteRequest(context.contentResolver, listOf(item.uri)).intentSender
+                            e is RecoverableSecurityException -> e.userAction.actionIntent.intentSender
+                            else -> null
+                        }
+                        if (sender != null) {
+                            vm.library.forget(item.key)
+                            deleteRequest.launch(IntentSenderRequest.Builder(sender).build())
+                        } else {
+                            vm.message = "Android did not allow deleting that file."
+                        }
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { vm.pendingDelete = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -158,11 +219,11 @@ private fun EngineBanner(state: Engine.State) {
         is Engine.State.Failed -> Triple(state.message, false, true)
         is Engine.State.Ready -> return
     }
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             if (busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(10.dp))
-            Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSecondaryContainer)
             if (retry) TextButton(onClick = { Engine.retryInit() }) { Text("Retry") }
         }
     }

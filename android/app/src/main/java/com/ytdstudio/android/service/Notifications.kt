@@ -50,8 +50,8 @@ object Notifications {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
 
-    fun finished(context: Context, jobId: String, title: String, ok: Boolean, message: String, uri: Uri?) {
-        val intent = if (ok && uri != null) PlayerActivity.local(context, uri, title) else Intent(context, MainActivity::class.java)
+    fun finished(context: Context, jobId: String, title: String, ok: Boolean, message: String, uri: Uri?, isVideo: Boolean = true) {
+        val intent = if (ok && uri != null) PlayerActivity.local(context, uri, title, isVideo) else Intent(context, MainActivity::class.java)
         val pending = PendingIntent.getActivity(context, jobId.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(context, CHANNEL_DONE)
             .setSmallIcon(R.drawable.ic_stat_download)

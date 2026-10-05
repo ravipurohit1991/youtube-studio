@@ -144,7 +144,7 @@ object Engine {
             .addOption("--no-progress")
             .addOption("--dump-single-json")
             .addOption("--flat-playlist")
-            .addOption("--playlist-end", 300)
+            .addOption("--playlist-end", 2000)
         val text = try {
             YoutubeDL.execute(req, null, null).out
         } catch (e: YoutubeDLException) {
@@ -252,6 +252,8 @@ object Engine {
         audioFormat: String,
         workDir: File,
         listener: Listener,
+        /** Prepended to the file name, e.g. "007 - " to keep a playlist folder in order. */
+        filePrefix: String = "",
     ): File = withContext(Dispatchers.IO) {
         awaitReady()
         workDir.mkdirs()
@@ -275,7 +277,7 @@ object Engine {
             .addOption("--force-overwrites")
             .addOption("-P", workDir.absolutePath)
             // Keep names well under Android's 255-byte limit.
-            .addOption("-o", "%(title).150B [%(id)s].%(ext)s")
+            .addOption("-o", filePrefix.replace("%", "%%") + "%(title).150B [%(id)s].%(ext)s")
             .addOption("-f", formatSelector(mode, height, audioFormat))
             .addOption("--embed-metadata")
         if (mode == DownloadMode.AUDIO) {
