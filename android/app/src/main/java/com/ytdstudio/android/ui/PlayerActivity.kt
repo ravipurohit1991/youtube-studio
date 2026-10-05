@@ -27,6 +27,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +84,10 @@ class PlayerActivity : ComponentActivity() {
     private var nowPlaying by mutableStateOf("")
     private var chromeVisible by mutableStateOf(true)
     private var inPip by mutableStateOf(false)
+    /** YouTube page of each queued item (media id -> URL), for AI insights. */
+    private var pageUrls: Map<String, String> = emptyMap()
+    private var currentMediaId by mutableStateOf<String?>(null)
+    private var insightsOpen by mutableStateOf(false)
     /** Another player screen took over the session: leaving this one must not touch playback. */
     private var replaced = false
     private val app get() = application as YtdApp
@@ -82,6 +95,10 @@ class PlayerActivity : ComponentActivity() {
     private val listener = object : Player.Listener {
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
             nowPlaying = mediaMetadata.title?.toString() ?: nowPlaying
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            currentMediaId = mediaItem?.mediaId
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -104,6 +121,7 @@ class PlayerActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         nowPlaying = intent.getStringExtra(EXTRA_TITLE) ?: intent.getStringArrayListExtra(EXTRA_TITLES)?.firstOrNull() ?: ""
+        pageUrls = pageUrlsOf(intent)
         val loadPayload = savedInstanceState == null
         setContent {
             YtdTheme(app.prefs.settings.value) {
@@ -145,8 +163,14 @@ class PlayerActivity : ComponentActivity() {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(nowPlaying, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
+                            if (currentPageUrl() != null) {
+                                IconButton(onClick = { insightsOpen = true }) {
+                                    Icon(Icons.Rounded.AutoAwesome, "AI insights", tint = Color.White)
+                                }
+                            }
                         }
                     }
+                    InsightsSheet()
                 }
             }
         }
@@ -164,12 +188,14 @@ class PlayerActivity : ComponentActivity() {
             playerView?.player = c
             if (loadPayload) load(c, intent)
             c.currentMediaItem?.mediaMetadata?.title?.let { nowPlaying = it.toString() }
+            currentMediaId = c.currentMediaItem?.mediaId
         }, ContextCompat.getMainExecutor(this))
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        pageUrls = pageUrlsOf(intent)
         controller?.let { load(it, intent) }
     }
 
@@ -211,18 +237,54 @@ class PlayerActivity : ComponentActivity() {
                     .setMediaType(if (isVideo) MediaMetadata.MEDIA_TYPE_VIDEO else MediaMetadata.MEDIA_TYPE_MUSIC)
                     .build()
                 val item = MediaItem.Builder()
-                    .setMediaId("stream:" + primary.hashCode())
+                    .setMediaId(streamMediaId(primary))
                     .setUri(primary)
                     .setRequestMetadata(MediaItem.RequestMetadata.Builder().setMediaUri(Uri.parse(primary)).setExtras(streamExtras).build())
                     .setMediaMetadata(meta)
                     .build()
                 c.shuffleModeEnabled = false
-                c.setMediaItem(item)
+                c.setMediaItem(item, intent.getLongExtra(EXTRA_START_MS, 0L).coerceAtLeast(0L))
             }
             else -> return // Opened from the media notification: just show what is playing.
         }
         c.prepare()
         c.play()
+    }
+
+    private fun currentPageUrl(): String? = currentMediaId?.let { pageUrls[it] }
+
+    /** Summary and questions about the playing video; key moments seek the player. */
+    @kotlin.OptIn(ExperimentalMaterial3Api::class)
+    @androidx.compose.runtime.Composable
+    private fun InsightsSheet() {
+        val url = currentPageUrl() ?: return
+        val scope = rememberCoroutineScope()
+        val ctl = remember(url) { InsightController(url, scope) }
+        DisposableEffect(ctl) { onDispose { ctl.stop() } }
+        if (!insightsOpen || inPip) return
+        ModalBottomSheet(onDismissRequest = { insightsOpen = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)) {
+            LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp)) {
+                item {
+                    InsightPanel(ctl, onSeek = { seconds ->
+                        controller?.let {
+                            it.seekTo((seconds * 1000).toLong())
+                            it.play()
+                        }
+                        insightsOpen = false
+                    }, autoSummarize = ctl.summary == null)
+                }
+            }
+        }
+    }
+
+    private fun pageUrlsOf(intent: Intent): Map<String, String> {
+        intent.getStringExtra(EXTRA_PAGE_URL)?.let { page ->
+            val primary = intent.getStringExtra(EXTRA_PRIMARY_URL) ?: return emptyMap()
+            return mapOf(streamMediaId(primary) to page)
+        }
+        val uris = intent.getStringArrayListExtra(EXTRA_URIS) ?: return emptyMap()
+        val ids = intent.getStringArrayListExtra(EXTRA_VIDEO_IDS).orEmpty()
+        return uris.indices.mapNotNull { i -> ids.getOrNull(i)?.takeIf { it.isNotBlank() }?.let { uris[i] to "https://www.youtube.com/watch?v=$it" } }.toMap()
     }
 
     private fun showsVideo(): Boolean {
@@ -295,10 +357,15 @@ class PlayerActivity : ComponentActivity() {
         private const val EXTRA_SHUFFLE = "shuffle"
         private const val EXTRA_STREAM = "stream"
         private const val EXTRA_PRIMARY_URL = "primaryUrl"
+        private const val EXTRA_PAGE_URL = "pageUrl"
+        private const val EXTRA_VIDEO_IDS = "videoIds"
+        private const val EXTRA_START_MS = "startMs"
+
+        private fun streamMediaId(primary: String) = "stream:" + primary.hashCode()
 
         private var active: WeakReference<PlayerActivity>? = null
 
-        data class Entry(val uri: String, val title: String, val isVideo: Boolean)
+        data class Entry(val uri: String, val title: String, val isVideo: Boolean, val videoId: String? = null)
 
         /** Play [entries] in order starting at [start] (or shuffled). */
         fun queue(context: Context, entries: List<Entry>, start: Int = 0, shuffle: Boolean = false): Intent =
@@ -306,6 +373,7 @@ class PlayerActivity : ComponentActivity() {
                 .putStringArrayListExtra(EXTRA_URIS, ArrayList(entries.map { it.uri }))
                 .putStringArrayListExtra(EXTRA_TITLES, ArrayList(entries.map { it.title }))
                 .putExtra(EXTRA_VIDEOS, entries.map { it.isVideo }.toBooleanArray())
+                .putStringArrayListExtra(EXTRA_VIDEO_IDS, ArrayList(entries.map { it.videoId ?: "" }))
                 .putExtra(EXTRA_START, start)
                 .putExtra(EXTRA_SHUFFLE, shuffle)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -313,7 +381,7 @@ class PlayerActivity : ComponentActivity() {
         fun local(context: Context, uri: Uri, title: String, isVideo: Boolean = true): Intent =
             queue(context, listOf(Entry(uri.toString(), title, isVideo)))
 
-        fun stream(context: Context, source: Engine.StreamSource, thumbnail: String?): Intent {
+        fun stream(context: Context, source: Engine.StreamSource, thumbnail: String?, startMs: Long = 0L): Intent {
             val primary = (source.video ?: source.audio)?.url
             return Intent(context, PlayerActivity::class.java)
                 .putExtra(EXTRA_TITLE, source.title)
@@ -321,6 +389,8 @@ class PlayerActivity : ComponentActivity() {
                 .putExtra(EXTRA_ARTWORK, thumbnail)
                 .putExtra(EXTRA_PRIMARY_URL, primary)
                 .putExtra(EXTRA_STREAM, StreamSourceFactory.extras(source))
+                .putExtra(EXTRA_PAGE_URL, source.pageUrl)
+                .putExtra(EXTRA_START_MS, startMs)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
     }

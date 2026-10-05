@@ -125,7 +125,7 @@ fun itemActions(
 /** Open the player on [items], starting at [start]. */
 fun play(context: Context, items: List<LibraryItem>, start: Int = 0, shuffle: Boolean = false) {
     if (items.isEmpty()) return
-    val entries = items.map { PlayerActivity.Companion.Entry(it.key, it.title, it.isVideo) }
+    val entries = items.map { PlayerActivity.Companion.Entry(it.key, it.title, it.isVideo, it.videoId) }
     val first = if (shuffle) items.indices.random() else start.coerceIn(0, items.lastIndex)
     context.startActivity(PlayerActivity.queue(context, entries, first, shuffle))
 }

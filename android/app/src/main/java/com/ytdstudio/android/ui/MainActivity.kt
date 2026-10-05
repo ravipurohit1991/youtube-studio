@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Settings
@@ -65,6 +66,7 @@ import com.ytdstudio.android.engine.Engine
 
 class MainActivity : ComponentActivity() {
     private val vm: MainViewModel by viewModels()
+    private val ai: AiViewModel by viewModels()
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,7 +81,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val settings by vm.prefs.settings.collectAsStateWithLifecycle()
-            YtdTheme(settings) { AppScreen(vm) }
+            YtdTheme(settings) { AppScreen(vm, ai) }
         }
     }
 
@@ -100,7 +102,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppScreen(vm: MainViewModel) {
+private fun AppScreen(vm: MainViewModel, ai: AiViewModel) {
     val context = LocalContext.current
     val engine by Engine.state.collectAsStateWithLifecycle()
     val jobs by vm.store.jobs.collectAsStateWithLifecycle()
@@ -114,6 +116,12 @@ private fun AppScreen(vm: MainViewModel) {
         vm.message?.let {
             snackbar.showSnackbar(it)
             vm.message = null
+        }
+    }
+    LaunchedEffect(ai.message) {
+        ai.message?.let {
+            snackbar.showSnackbar(it)
+            ai.message = null
         }
     }
     LaunchedEffect((engine as? Engine.State.Ready)?.notice) {
@@ -136,6 +144,7 @@ private fun AppScreen(vm: MainViewModel) {
             NavigationBar {
                 listOf(
                     Triple(Tab.HOME, "Home", Icons.Rounded.Home),
+                    Triple(Tab.DISCOVER, "Discover", Icons.Rounded.AutoAwesome),
                     Triple(Tab.LIBRARY, "Library", Icons.Rounded.VideoLibrary),
                     Triple(Tab.DOWNLOADS, "Downloads", Icons.Rounded.Download),
                     Triple(Tab.SETTINGS, "Settings", Icons.Rounded.Settings),
@@ -166,9 +175,10 @@ private fun AppScreen(vm: MainViewModel) {
             Box(Modifier.weight(1f).then(belowBanner)) {
                 when (vm.tab) {
                     Tab.HOME -> HomeScreen(vm)
-                    Tab.LIBRARY -> LibraryScreen(vm)
+                    Tab.DISCOVER -> DiscoverScreen(vm, ai)
+                    Tab.LIBRARY -> LibraryScreen(vm, ai)
                     Tab.DOWNLOADS -> DownloadsScreen(vm)
-                    Tab.SETTINGS -> SettingsScreen(vm)
+                    Tab.SETTINGS -> SettingsScreen(vm, ai)
                 }
             }
         }

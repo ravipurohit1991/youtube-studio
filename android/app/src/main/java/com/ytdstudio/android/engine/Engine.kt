@@ -155,6 +155,92 @@ object Engine {
         parseMeta(url, JSONObject(json))
     }
 
+    /** The full yt-dlp info JSON for one video (captions, chapters, description...). */
+    suspend fun infoJson(url: String): JSONObject = withContext(Dispatchers.IO) {
+        awaitReady()
+        val req = YoutubeDLRequest(url)
+            .addOption("--ignore-config")
+            .addOption("--no-warnings")
+            .addOption("--no-playlist")
+            .addOption("--skip-download")
+            .addOption("--dump-single-json")
+        val text = try {
+            YoutubeDL.execute(req, null, null).out
+        } catch (e: YoutubeDLException) {
+            throw IllegalStateException(cleanError(e.message ?: "").ifBlank { "yt-dlp could not read that video." })
+        }
+        JSONObject(text.lineSequence().map { it.trim() }.lastOrNull { it.startsWith("{") } ?: throw IllegalStateException("yt-dlp returned no data."))
+    }
+
+    /** One video from a YouTube results page. */
+    data class SearchHit(
+        val id: String,
+        val title: String,
+        val channel: String?,
+        val duration: Double?,
+        val views: Long?,
+        val description: String?,
+        val live: Boolean,
+        val short: Boolean,
+    )
+
+    /** Run a YouTube results page (search URL with filters) and return its videos, flat. */
+    suspend fun searchVideos(searchUrl: String, limit: Int): List<SearchHit> = withContext(Dispatchers.IO) {
+        awaitReady()
+        val req = YoutubeDLRequest(searchUrl)
+            .addOption("--ignore-config")
+            .addOption("--no-warnings")
+            .addOption("--no-progress")
+            .addOption("--dump-single-json")
+            .addOption("--flat-playlist")
+            .addOption("--playlist-end", limit)
+        val text = try {
+            YoutubeDL.execute(req, null, null).out
+        } catch (e: YoutubeDLException) {
+            throw IllegalStateException(cleanError(e.message ?: "").ifBlank { "YouTube search failed." })
+        }
+        val info = JSONObject(text.lineSequence().map { it.trim() }.lastOrNull { it.startsWith("{") } ?: return@withContext emptyList())
+        info.optJSONArray("entries")?.objects().orEmpty().mapNotNull { e ->
+            val id = e.optStringOrNull("id") ?: return@mapNotNull null
+            // Flat search pages also list channels and playlists; keep only videos (11-character ids).
+            if (!Regex("^[\\w-]{11}$").matches(id)) return@mapNotNull null
+            val liveStatus = e.optStringOrNull("live_status")
+            if (liveStatus == "is_upcoming") return@mapNotNull null
+            SearchHit(
+                id = id,
+                title = e.optStringOrNull("title") ?: id,
+                channel = e.optStringOrNull("channel") ?: e.optStringOrNull("uploader"),
+                duration = e.optDoubleOrNull("duration"),
+                views = if (e.has("view_count") && !e.isNull("view_count")) e.optLong("view_count") else null,
+                description = e.optStringOrNull("description"),
+                live = liveStatus == "is_live",
+                short = (e.optStringOrNull("url") ?: "").contains("/shorts/"),
+            )
+        }
+    }
+
+    /** Download one caption track as WebVTT into [dir]; null when nothing was written. */
+    suspend fun downloadCaptions(url: String, lang: String, auto: Boolean, dir: File): File? = withContext(Dispatchers.IO) {
+        awaitReady()
+        dir.mkdirs()
+        val req = YoutubeDLRequest(url)
+            .addOption("--ignore-config")
+            .addOption("--no-warnings")
+            .addOption("--no-playlist")
+            .addOption("--skip-download")
+            .addOption(if (auto) "--write-auto-subs" else "--write-subs")
+            .addOption("--sub-langs", lang)
+            .addOption("--sub-format", "vtt/best")
+            .addOption("-P", dir.absolutePath)
+            .addOption("-o", "captions.%(ext)s")
+        try {
+            YoutubeDL.execute(req, null, null)
+        } catch (e: YoutubeDLException) {
+            Log.w(TAG, "captions: " + cleanError(e.message ?: ""))
+        }
+        dir.listFiles()?.firstOrNull { it.name.startsWith("captions.") && it.name.endsWith(".vtt") }
+    }
+
     private fun parseMeta(url: String, info: JSONObject): VideoMeta {
         val type = info.optStringOrNull("_type")
         if (type == "playlist" || type == "multi_video") {
@@ -358,7 +444,15 @@ object Engine {
 
     /** What the player needs to stream a video without saving it. */
     data class Track(val url: String, val headers: Map<String, String>, val isHls: Boolean)
-    data class StreamSource(val title: String, val uploader: String?, val video: Track?, val audio: Track?, val label: String)
+    data class StreamSource(
+        val title: String,
+        val uploader: String?,
+        val video: Track?,
+        val audio: Track?,
+        val label: String,
+        /** The YouTube page, for AI insights in the player. */
+        val pageUrl: String? = null,
+    )
 
     /**
      * Resolve playable URLs (plus the headers yt-dlp says they need) for in-app streaming.
@@ -408,6 +502,7 @@ object Engine {
             // Muxed formats carry their own audio; audio-only requests have no video part.
             audio = (if (videoPart == null) parts.firstOrNull() else audioPart)?.let(::track),
             label = label,
+            pageUrl = info.optStringOrNull("webpage_url") ?: url,
         )
     }
 

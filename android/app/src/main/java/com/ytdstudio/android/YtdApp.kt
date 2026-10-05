@@ -1,6 +1,7 @@
 package com.ytdstudio.android
 
 import android.app.Application
+import com.ytdstudio.android.ai.Ai
 import com.ytdstudio.android.data.JobStore
 import com.ytdstudio.android.data.LibraryStore
 import com.ytdstudio.android.data.Prefs
@@ -21,6 +22,7 @@ class YtdApp : Application() {
         prefs = Prefs(this)
         jobs = JobStore(this)
         library = LibraryStore(this)
+        Ai.init(this, prefs, library)
         Notifications.createChannels(this)
         // Unpacks python/ffmpeg on first run and keeps yt-dlp current, in the background.
         Engine.start(this, prefs)

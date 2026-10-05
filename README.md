@@ -1,7 +1,7 @@
 # YTD Studio
 
 A lightweight Windows desktop app (Electron + TypeScript + React), plus an [Android app](#android-app)
-with the same core features, for four jobs, plus an optional [AI layer](#ai-discover-summaries-and-smart-playlists-ollama) on the desktop:
+with the same features, for four jobs, plus an optional [AI layer](#ai-discover-summaries-and-smart-playlists-ollama) in both apps:
 
 1. **Stream**: paste a YouTube link and watch it inside the app. No ads, no popups, and seeking works properly.
 2. **Download**: two modes only. The **whole video (with audio)** as MP4, or **audio only** (MP3/M4A/OPUS/WAV/FLAC).
@@ -84,7 +84,8 @@ YouTube changes constantly, so an out-of-date yt-dlp is the most common cause of
 
 ## AI: Discover, summaries and smart playlists (Ollama)
 
-Everything AI is optional and off until you connect a model. Open **Settings > AI (Ollama)**:
+Everything AI is optional and off until you connect a model. It works the same on the desktop and on
+Android (see [Android: AI](#android-ai) for the differences). Open **Settings > AI (Ollama)**:
 
 1. **Server**: *Ollama Cloud* (`https://ollama.com`, the default) or *Local Ollama* (`http://localhost:11434`).
 2. **API key** (needed for the cloud): create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)
@@ -259,7 +260,8 @@ watch and organize everything offline.
 | Home | One link bar: paste (or share) a video or playlist and a sheet offers **Watch now**, **Listen** (audio only) or **Download** (a whole playlist in one tap, optionally kept in sync). Below: *Continue watching*, *Recently added*, your playlists and favorites. |
 | Library | Videos (grid or list), Music, Playlists and Favorites tabs, with search, sorting, play all and shuffle. Every item has favorite, add to playlist, mark (un)watched, share, open with and delete. Playlists: downloaded YouTube playlists (in order, with Sync) and your own (create, rename, reorder, remove). |
 | Downloads | Live queue with progress and stages ("Downloading video", "Merging video and audio", "Saving..."), history and retry, and your synced playlists with **Sync** / **Sync all**. Downloads keep running in the background with a progress notification. |
-| Settings | Theme (system / light / dark, Material You colors), playback (resume, picture-in-picture, background play for videos), download defaults, playlist folders, yt-dlp version and updates. |
+| Discover | The [AI Discover](#discover-your-own-recommendation-algorithm) feed: describe what you want (or tap **For you**), get ranked videos with reasons, refine, thumbs up/down, hide channels, then Play, Summary or Download. |
+| Settings | **AI (Ollama)**: server, API key, model, test. Theme (system / light / dark, Material You colors), playback (resume, picture-in-picture, background play for videos), download defaults, playlist folders, yt-dlp version and updates. |
 
 The player runs as a media session: music keeps playing in the background with lock-screen and
 notification controls, videos shrink to **picture-in-picture** when you leave, and the queue has
@@ -269,6 +271,21 @@ Files are saved through Android's MediaStore into **Movies/YTD Studio** (video) 
 **Music/YTD Studio** (audio), playlists in a subfolder each, so they show up in Gallery and music
 players and stay on the phone even if the app is uninstalled. No storage permission is needed.
 Android 10 or newer.
+
+### Android: AI
+
+The same Discover, insights and smart playlists as the desktop app, in Kotlin (`ai/`): same prompts,
+same YouTube search filters, same ranking and feedback. Differences:
+
+- **API key**: encrypted with an AES key held in the **Android Keystore** (hardware-backed on most
+  phones, never exportable); only the ciphertext is stored, and backups are off.
+- **AI insights** live in the player: tap the sparkle button while a stream or a downloaded YouTube video
+  plays, and the key moments in the summary seek the player. Discover's **Summary** opens the same sheet
+  before you watch.
+- **Smart playlists**: Library > Playlists > **Smart playlists**.
+- **Your own server** works too: set the server to your computer's address, e.g. `http://192.168.1.20:11434`
+  (start Ollama with `OLLAMA_HOST=0.0.0.0` so the phone can reach it). Plain HTTP is allowed for this;
+  the API key is never sent over plain HTTP to another machine.
 
 ### Does Android need yt-dlp and ffmpeg? Yes, and they are inside the APK
 
@@ -335,12 +352,16 @@ cd android
 
 ```text
 android/app/src/main/java/com/ytdstudio/android/
-  engine/Engine.kt          yt-dlp: init, self-update, probe, download (progress + stages), stream URLs
+  engine/Engine.kt          yt-dlp: init, self-update, probe, download (progress + stages), stream URLs,
+                            YouTube search pages and caption downloads for the AI features
+  ai/                       Ollama client (streamed chat, structured JSON, web search), Keystore-encrypted
+                            key, Discover (plan, search, filter, rank), insights from captions, smart
+                            playlists, taste profile
   service/DownloadService   foreground service running the queue, progress notification, wake lock
   service/PlaybackService   Media3 session: background playback, media notification, watch progress
   data/                     job queue + history, library state (favorites, progress, playlists, synced
                             playlists), settings, MediaStore save/list per playlist folder (MediaLibrary)
-  ui/                       Compose screens (Home, Library, Downloads, Settings, link sheet), player
+  ui/                       Compose screens (Home, Discover, Library, Downloads, Settings, link sheet), player
                             screen with picture-in-picture, stream sources (10 MB chunked reads)
 ```
 

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
@@ -94,7 +95,7 @@ private fun List<LibraryItem>.sortedByKey(key: SortKey): List<LibraryItem> = whe
 }
 
 @Composable
-fun LibraryScreen(vm: MainViewModel) {
+fun LibraryScreen(vm: MainViewModel, ai: AiViewModel) {
     val ref = vm.openPlaylist
     if (ref != null) {
         PlaylistDetail(vm, ref)
@@ -218,7 +219,7 @@ fun LibraryScreen(vm: MainViewModel) {
                 permissionCard()
                 PlayAllRow(context, music, "tracks")
             }, empty = { NothingHere(vm, query, Icons.Rounded.LibraryMusic, "No music yet") })
-            2 -> PlaylistsTab(vm, state, query)
+            2 -> PlaylistsTab(vm, ai, state, query)
             else -> ItemList(vm, state, favorites, header = { PlayAllRow(context, favorites, "favorites") }, empty = {
                 EmptyState(Icons.Rounded.FavoriteBorder, "No favorites yet", "Open the menu on any video or song and pick \"Add to favorites\".")
             })
@@ -274,8 +275,9 @@ private fun ItemList(
 }
 
 @Composable
-private fun PlaylistsTab(vm: MainViewModel, state: LibraryState, query: String) {
+private fun PlaylistsTab(vm: MainViewModel, ai: AiViewModel, state: LibraryState, query: String) {
     var creating by remember { mutableStateOf(false) }
+    var smart by remember { mutableStateOf(false) }
     val folders = vm.items.filter { it.folder != null }.groupBy { it.folder!! }
         .filterKeys { query.isBlank() || it.contains(query, ignoreCase = true) }
         .toSortedMap(String.CASE_INSENSITIVE_ORDER)
@@ -283,10 +285,23 @@ private fun PlaylistsTab(vm: MainViewModel, state: LibraryState, query: String) 
     val mine = state.playlists.filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
         item {
-            Button(onClick = { creating = true }) {
-                Icon(Icons.Rounded.Add, null)
-                Spacer(Modifier.width(6.dp))
-                Text("New playlist")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = { creating = true }) {
+                    Icon(Icons.Rounded.Add, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("New playlist")
+                }
+                FilledTonalButton(onClick = {
+                    if (ai.status.ready) smart = true
+                    else {
+                        vm.message = "Set up AI in Settings first: add your Ollama API key and pick a model."
+                        vm.tab = Tab.SETTINGS
+                    }
+                }) {
+                    Icon(Icons.Rounded.AutoAwesome, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Smart playlists")
+                }
             }
         }
         if (mine.isNotEmpty()) {
@@ -316,6 +331,7 @@ private fun PlaylistsTab(vm: MainViewModel, state: LibraryState, query: String) 
             }
         }
     }
+    if (smart) SmartPlaylistsDialog(vm, ai) { smart = false }
     if (creating) {
         TextInputDialog("New playlist", "", "Create", { name ->
             val id = vm.library.createPlaylist(name)
