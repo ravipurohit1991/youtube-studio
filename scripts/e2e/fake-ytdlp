@@ -21,10 +21,44 @@ FORMATS = [
 ]
 INFO = {'id': 'abc123def45', 'title': 'Test Clip', 'uploader': 'Tester', 'duration': 20,
         'thumbnail': 'https://i.ytimg.com/vi/abc123def45/hqdefault.jpg', 'webpage_url': 'https://www.youtube.com/watch?v=abc123def45',
-        'formats': FORMATS, 'extractor_key': 'Youtube'}
+        'formats': FORMATS, 'extractor_key': 'Youtube', 'language': 'en', 'description': 'A short test clip.',
+        'automatic_captions': {'en-orig': [{'ext': 'vtt', 'url': BASE + '/captions.vtt'}], 'de': [{'ext': 'vtt', 'url': BASE + '/de.vtt'}]}}
+# Rolling automatic captions, the way YouTube writes them: each cue repeats the previous line.
+VTT = '''WEBVTT
+Kind: captions
+Language: en
+
+00:00:01.000 --> 00:00:03.000 align:start position:0%
+hello from the captions
+
+00:00:03.000 --> 00:00:06.000 align:start position:0%
+hello from the captions
+<00:00:04.000><c>the</c><00:00:04.500><c> tone</c><00:00:05.000><c> starts</c>
+
+00:00:12.000 --> 00:00:15.000 align:start position:0%
+halfway &amp; still going
+'''
 def opt(name):
     return args[args.index(name) + 1] if name in args else None
 url = args[-1]
+if '-J' in args and 'results?search_query=' in url:
+    import hashlib, urllib.parse
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)['search_query'][0]
+    def vid(n):
+        return hashlib.md5((q + str(n)).encode()).hexdigest()[:11]
+    entries = [{'id': vid(n), 'url': 'https://www.youtube.com/watch?v=' + vid(n), 'title': '%s, part %d' % (q.title(), n),
+                'channel': 'Channel %d' % n, 'duration': 300 + n * 60, 'view_count': 1000 * n, 'description': 'About ' + q}
+               for n in range(1, 5)]
+    entries.append({'id': vid(9), 'url': 'https://www.youtube.com/shorts/' + vid(9), 'title': 'A short about ' + q, 'channel': 'Shorty', 'duration': 30})
+    entries.append({'id': vid(8), 'url': 'https://www.youtube.com/watch?v=' + vid(8), 'title': 'LIVE ' + q, 'channel': 'Live', 'live_status': 'is_live'})
+    # Already in the library: Discover leaves it out.
+    entries.append({'id': 'xyzxyzxyz12', 'url': 'https://www.youtube.com/watch?v=xyzxyzxyz12', 'title': 'Song Title', 'channel': 'Band', 'duration': 200})
+    entries.append({'id': 'UCchannel', 'url': 'https://www.youtube.com/channel/UCchannel', 'title': 'A channel', 'ie_key': 'YoutubeTab'})
+    print(json.dumps({'_type': 'playlist', 'id': q, 'title': q, 'entries': entries, 'extractor_key': 'YoutubeSearchURL'})); sys.exit(0)
+if '--skip-download' in args and ('--write-auto-subs' in args or '--write-subs' in args):
+    lang = opt('--sub-langs')
+    with open(os.path.join(opt('-P'), 'captions.%s.vtt' % lang), 'w') as f: f.write(VTT)
+    sys.exit(0)
 TITLES = {'abc123def45': 'Test Clip', 'def456ghi78': 'Second Clip', 'ghi789jkl01': 'Third Clip'}
 if '-J' in args and 'list=' in url:
     ids = ['abc123def45', 'def456ghi78']

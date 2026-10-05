@@ -26,6 +26,14 @@ data class Settings(
     val backgroundVideo: Boolean = false,
     /** Leaving the player while a video plays shrinks it into a floating window. */
     val pictureInPicture: Boolean = true,
+    /** Ollama server for the AI features: Ollama Cloud or a local/self-hosted Ollama. */
+    val aiHost: String = "https://ollama.com",
+    /** Model the AI features use, as listed by the server (for example gpt-oss:120b). */
+    val aiModel: String = "",
+    /** Discover uses your library, favorites and feedback as a taste profile. */
+    val aiPersonalize: Boolean = true,
+    /** Discover looks the request up with Ollama web search before planning searches. */
+    val aiUseWeb: Boolean = false,
 )
 
 class Prefs(context: Context) {
@@ -51,6 +59,10 @@ class Prefs(context: Context) {
             resumePlayback = sp.getBoolean("resumePlayback", d.resumePlayback),
             backgroundVideo = sp.getBoolean("backgroundVideo", d.backgroundVideo),
             pictureInPicture = sp.getBoolean("pictureInPicture", d.pictureInPicture),
+            aiHost = sp.getString("aiHost", d.aiHost)!!.trim().trimEnd('/').ifEmpty { d.aiHost },
+            aiModel = sp.getString("aiModel", d.aiModel)!!,
+            aiPersonalize = sp.getBoolean("aiPersonalize", d.aiPersonalize),
+            aiUseWeb = sp.getBoolean("aiUseWeb", d.aiUseWeb),
         )
     }
 
@@ -68,6 +80,10 @@ class Prefs(context: Context) {
             .putBoolean("resumePlayback", next.resumePlayback)
             .putBoolean("backgroundVideo", next.backgroundVideo)
             .putBoolean("pictureInPicture", next.pictureInPicture)
+            .putString("aiHost", next.aiHost)
+            .putString("aiModel", next.aiModel)
+            .putBoolean("aiPersonalize", next.aiPersonalize)
+            .putBoolean("aiUseWeb", next.aiUseWeb)
             .apply()
         state.value = next
     }

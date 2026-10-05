@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { DesktopApi, JobProgressPayload, LibraryState, UpdateStatus } from '@shared/types'
+import type { AiProgress, DesktopApi, JobProgressPayload, LibraryState, UpdateStatus } from '@shared/types'
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -46,6 +46,25 @@ const api: DesktopApi = {
   savePlaylist: (playlist) => invoke(IPC.libSavePlaylist, playlist),
   removeSavedPlaylist: (id) => invoke(IPC.libRemoveSaved, id),
   syncPlaylist: (id) => invoke(IPC.libSyncPlaylist, id),
+  aiStatus: () => invoke(IPC.aiStatus),
+  aiSetKey: (key) => invoke(IPC.aiSetKey, key),
+  aiClearKey: () => invoke(IPC.aiClearKey),
+  aiListModels: () => invoke(IPC.aiListModels),
+  aiTest: () => invoke(IPC.aiTest),
+  aiDiscover: (req) => invoke(IPC.aiDiscover, req),
+  aiSummarize: (req) => invoke(IPC.aiSummarize, req),
+  aiAsk: (req) => invoke(IPC.aiAsk, req),
+  aiOrganize: (requestId) => invoke(IPC.aiOrganize, requestId),
+  aiCancel: (requestId) => invoke(IPC.aiCancel, requestId),
+  aiTaste: () => invoke(IPC.aiTaste),
+  aiTasteUpdate: (action) => invoke(IPC.aiTasteUpdate, action),
+  onAiProgress: (cb) => {
+    const listener = (_event: IpcRendererEvent, payload: AiProgress): void => cb(payload)
+    ipcRenderer.on(IPC.aiProgress, listener)
+    return function () {
+      ipcRenderer.removeListener(IPC.aiProgress, listener)
+    }
+  },
   onLibraryState: (cb) => {
     const listener = (_event: IpcRendererEvent, payload: LibraryState): void => cb(payload)
     ipcRenderer.on(IPC.libStateChanged, listener)

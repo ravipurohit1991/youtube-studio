@@ -18,13 +18,25 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,13 +47,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import com.ytdstudio.android.ai.AiCore
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ytdstudio.android.BuildConfig
+import com.ytdstudio.android.ai.Ai
 import com.ytdstudio.android.data.DownloadMode
 import com.ytdstudio.android.data.MediaLibrary
 import com.ytdstudio.android.data.Prefs
@@ -50,7 +73,7 @@ import com.ytdstudio.android.data.ThemeMode
 import com.ytdstudio.android.engine.Engine
 
 @Composable
-fun SettingsScreen(vm: MainViewModel) {
+fun SettingsScreen(vm: MainViewModel, ai: AiViewModel) {
     val settings by vm.prefs.settings.collectAsStateWithLifecycle()
     val engine by Engine.state.collectAsStateWithLifecycle()
     fun set(transform: (Settings) -> Settings) = vm.prefs.update(transform)
@@ -59,6 +82,8 @@ fun SettingsScreen(vm: MainViewModel) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
+
+        AiSection(ai, settings)
 
         Section("Appearance", Icons.Rounded.Palette) {
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -139,6 +164,106 @@ fun SettingsScreen(vm: MainViewModel) {
             )
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** Ollama connection: server, API key (Android Keystore), model, and Discover defaults. */
+@Composable
+private fun AiSection(ai: AiViewModel, settings: Settings) {
+    val status = ai.status
+    var host by remember(status.host) { mutableStateOf(status.host) }
+    var key by remember { mutableStateOf("") }
+    var replacing by remember { mutableStateOf(false) }
+    var modelMenu by remember { mutableStateOf(false) }
+    val canList = status.hasKey || !status.isCloud
+    LaunchedEffect(status.host, status.keyHint) {
+        if (canList && ai.models.isEmpty()) ai.loadModels(quiet = true)
+    }
+    Section("AI (Ollama)", Icons.Rounded.AutoAwesome) {
+        Text(
+            when {
+                status.ready -> "Ready · " + status.model
+                status.isCloud && !status.hasKey -> "Add your Ollama API key to turn on Discover, summaries and smart playlists."
+                else -> "Pick a model to finish."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (status.ready) Ok else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Label("Server")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(host, { host = it }, singleLine = true, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+            IconButton(onClick = { ai.setHost(host) }, enabled = host.trim().trimEnd('/') != status.host) { Icon(Icons.Rounded.Save, "Save server") }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(status.isCloud, { ai.setHost(AiCore.CLOUD_HOST) }, { Text("Ollama Cloud") })
+        }
+        Hint("Or your own Ollama, e.g. http://192.168.1.20:11434 (start it with OLLAMA_HOST=0.0.0.0). The key is never sent over plain HTTP to another machine.")
+
+        Label(if (status.isCloud) "API key" else "API key (optional; used for web search)")
+        if (status.hasKey && !replacing) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Rounded.Key, null, tint = Ok, modifier = Modifier.size(18.dp))
+                Text("Saved ····" + status.keyHint, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = { replacing = true }) { Text("Replace") }
+                TextButton(onClick = { ai.clearKey() }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            }
+            Hint("Encrypted with the Android Keystore; only sent to your AI server and Ollama web search.")
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    key, { key = it },
+                    singleLine = true,
+                    placeholder = { Text("Paste your Ollama API key") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { if (ai.saveKey(key)) { key = ""; replacing = false } }, enabled = key.isNotBlank()) { Text("Save") }
+            }
+            Hint("Create one at ollama.com/settings/keys.")
+        }
+
+        Label("Model")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { modelMenu = true }, enabled = ai.models.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                    Text(status.model.ifBlank { if (canList) "Choose a model" else "Save your API key first" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
+                    ai.models.forEach { m ->
+                        DropdownMenuItem(
+                            text = { Text(m.name + (m.parameterSize?.let { "  ($it)" } ?: "")) },
+                            onClick = { modelMenu = false; ai.setModel(m.name) },
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = { ai.loadModels() }, enabled = canList && !ai.modelsLoading) {
+                if (ai.modelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Refresh, "Refresh the model list")
+            }
+        }
+        ai.modelsError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledTonalButton(onClick = { ai.test() }, enabled = status.ready && !ai.testing) {
+                if (ai.testing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("Test connection")
+            }
+            Spacer(Modifier.width(10.dp))
+            ai.testResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Ok, modifier = Modifier.weight(1f)) }
+        }
+        Hint("Bigger models rank and summarize better; smaller ones answer faster.")
+        Toggle("Personalize Discover", "Use your downloads, favorites and thumbs up/down as a taste profile.", settings.aiPersonalize) { on ->
+            Ai.prefs.update { it.copy(aiPersonalize = on) }
+        }
+        if (status.hasKey) {
+            Toggle("Check the web first", "Discover looks the request up with Ollama web search before searching YouTube.", settings.aiUseWeb) { on ->
+                Ai.prefs.update { it.copy(aiUseWeb = on) }
+            }
+        }
+        Hint(
+            "Sent to the server only when you use an AI feature: your request, titles and channels of search results, (with Personalize) titles from your library, " +
+                "and the captions of videos you summarize or ask about.",
+        )
     }
 }
 

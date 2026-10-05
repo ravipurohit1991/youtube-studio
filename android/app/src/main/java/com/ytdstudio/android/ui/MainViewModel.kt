@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ytdstudio.android.YtdApp
+import com.ytdstudio.android.ai.DiscoverVideo
 import com.ytdstudio.android.data.DownloadMode
 import com.ytdstudio.android.data.DownloadRequest
 import com.ytdstudio.android.data.LibraryItem
@@ -20,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class Tab { HOME, LIBRARY, DOWNLOADS, SETTINGS }
+enum class Tab { HOME, DISCOVER, LIBRARY, DOWNLOADS, SETTINGS }
 
 /** A playlist in the Library: a downloaded YouTube playlist (its folder) or one the user made. */
 sealed interface PlaylistRef {
@@ -151,6 +152,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 resolvingStream = null
             }
         }
+    }
+
+    /** Download videos picked in Discover, with the default quality and audio format. */
+    fun queueDiscover(videos: List<DiscoverVideo>, mode: DownloadMode) {
+        if (videos.isEmpty()) return
+        val s = prefs.settings.value
+        store.addAll(videos.map { v -> DownloadRequest(v.url, mode, s.preferredHeight, s.audioFormat, v.title, v.channel, v.thumbnail, v.duration, videoId = v.id) })
+        DownloadService.kick(getApplication())
+        message = if (videos.size == 1) "Download started." else "${videos.size} downloads queued."
     }
 
     fun cancel(id: String) = DownloadService.cancel(getApplication(), id)

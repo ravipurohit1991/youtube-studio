@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { ArrowDown, ArrowUp, Ellipsis, FolderOpen, FolderSync, ListVideo, Pencil, Play, Plus, RefreshCw, Shuffle, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Ellipsis, FolderOpen, FolderSync, ListVideo, Pencil, Play, Plus, RefreshCw, Shuffle, Sparkles, Trash2, X } from 'lucide-react'
 import type { LibraryItem, LibraryState, SavedPlaylist, Settings } from '@shared/types'
 import { errorMessage, unwrap } from '../lib/api'
 import { formatDuration, timeAgo } from '../lib/format'
@@ -18,6 +18,7 @@ interface Props {
   onPlay: (list: LibraryItem[], index: number, shuffle?: boolean) => void
   onAddToPlaylist: (keys: string[]) => void
   onSync: (playlist: SavedPlaylist) => void
+  onSmartPlaylists: () => void
 }
 
 function sameSelection(a: Selection | null, b: Selection): boolean {
@@ -26,7 +27,7 @@ function sameSelection(a: Selection | null, b: Selection): boolean {
 }
 
 /** Downloaded YouTube playlists (one folder each, optionally kept in sync) and playlists made in the app. */
-export default function PlaylistsTab({ items, libState, settings, syncing, pushToast, onPlay, onAddToPlaylist, onSync }: Props): ReactNode {
+export default function PlaylistsTab({ items, libState, settings, syncing, pushToast, onPlay, onAddToPlaylist, onSync, onSmartPlaylists }: Props): ReactNode {
   const [selection, setSelection] = useState<Selection | null>(null)
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -90,6 +91,10 @@ export default function PlaylistsTab({ items, libState, settings, syncing, pushT
         <button type="button" className="btn primary" style={{ width: '100%' }} onClick={() => setCreating(true)}>
           <Plus size={15} />
           <span>New playlist</span>
+        </button>
+        <button type="button" className="btn" style={{ width: '100%' }} onClick={onSmartPlaylists} title="Let AI sort your library into themed playlists">
+          <Sparkles size={15} />
+          <span>Smart playlists (AI)</span>
         </button>
 
         <div className="pl-section">Your playlists</div>

@@ -3,16 +3,21 @@ import { ClipboardPaste, Download, Film, Loader2, Music, Play, TriangleAlert, X 
 import type { DownloadMode, Settings, StreamSession } from '@shared/types'
 import { errorMessage, unwrap } from '../lib/api'
 import { formatCount, formatDuration, isYouTubeUrl } from '../lib/format'
-import type { ToastTone } from '../lib/types'
+import type { StreamDraft, ToastTone } from '../lib/types'
 import { EmptyState, LoadingRow } from './common'
+import InsightPanel from './InsightPanel'
 
 interface Props {
   settings: Settings
   pushToast: (message: string, tone?: ToastTone) => void
   onDownload: (url: string, mode: DownloadMode) => void
+  /** Play this link now (sent from Discover), optionally from a given second. */
+  draft: StreamDraft | null
+  aiReady: boolean
+  onOpenAiSettings: () => void
 }
 
-export default function StreamTab({ settings, pushToast, onDownload }: Props): ReactNode {
+export default function StreamTab({ settings, pushToast, onDownload, draft, aiReady, onOpenAiSettings }: Props): ReactNode {
   const [url, setUrl] = useState('')
   const [session, setSession] = useState<StreamSession | null>(null)
   const [loading, setLoading] = useState(false)
@@ -22,6 +27,9 @@ export default function StreamTab({ settings, pushToast, onDownload }: Props): R
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const pending = useRef<{ time: number; play: boolean } | null>(null)
+  const handledDraft = useRef(0)
+  // The video the AI panel is about; it survives quality switches (which briefly clear the session).
+  const [insightUrl, setInsightUrl] = useState<string | null>(null)
 
   const load = useCallback(
     async (options?: { target?: string; height?: number | null; audioOnly?: boolean; keepPosition?: boolean }) => {
@@ -47,6 +55,7 @@ export default function StreamTab({ settings, pushToast, onDownload }: Props): R
       try {
         const resolved = await unwrap(window.api.resolveStream({ url: target, height: nextHeight, audioOnly: nextAudioOnly }))
         setSession(resolved)
+        setInsightUrl(resolved.pageUrl)
         setHeight(resolved.height ?? (nextAudioOnly ? null : nextHeight))
         setAudioOnly(resolved.isAudioOnly)
       } catch (err) {
@@ -79,6 +88,22 @@ export default function StreamTab({ settings, pushToast, onDownload }: Props): R
     else target.addEventListener('loadedmetadata', apply, { once: true })
     return undefined
   }, [session?.sessionId])
+
+  useEffect(() => {
+    if (!draft || handledDraft.current === draft.nonce) return
+    handledDraft.current = draft.nonce
+    setUrl(draft.url)
+    pending.current = draft.startAt ? { time: draft.startAt, play: true } : null
+    void load({ target: draft.url })
+  }, [draft, load])
+
+  const seek = useCallback((seconds: number) => {
+    const media = videoRef.current ?? audioRef.current
+    if (!media) return
+    media.currentTime = seconds
+    void media.play().catch(() => undefined)
+    media.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [])
 
   const separateAudio = !!session?.separateAudio && !!session.video && !!session.audio
 
@@ -178,7 +203,7 @@ export default function StreamTab({ settings, pushToast, onDownload }: Props): R
             }}
           />
           {url ? (
-            <button type="button" className="btn ghost" onClick={() => { setUrl(''); setSession(null); setError(null) }} title="Clear">
+            <button type="button" className="btn ghost" onClick={() => { setUrl(''); setSession(null); setError(null); setInsightUrl(null) }} title="Clear">
               <X size={16} />
             </button>
           ) : null}
@@ -280,6 +305,12 @@ export default function StreamTab({ settings, pushToast, onDownload }: Props): R
               Open on YouTube
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {insightUrl && (session || loading) && !error ? (
+        <div style={{ marginTop: 16 }}>
+          <InsightPanel url={insightUrl} aiReady={aiReady} onOpenSettings={onOpenAiSettings} pushToast={pushToast} onSeek={seek} />
         </div>
       ) : null}
 

@@ -1,7 +1,19 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { IPC } from '@shared/ipc'
 import type {
+  AiModel,
+  AiProgress,
+  AiStatus,
+  AiTestResult,
   AppInfo,
+  AskRequest,
+  DiscoverRequest,
+  DiscoverResult,
+  InsightRequest,
+  InsightResult,
+  OrganizeResult,
+  TasteAction,
+  TasteProfile,
   DownloadRequest,
   DownloadJob,
   IpcResult,
@@ -19,6 +31,10 @@ import type {
   VideoMeta,
   YtdlpUpdateInfo,
 } from '@shared/types'
+import { discover } from './ai/discover'
+import { ask, organize, summarize } from './ai/insights'
+import { aiStatus, beginRequest, cancelRequest, chat, clearApiKey, endRequest, listModels, requireReady, saveApiKey } from './ai/ollama'
+import { taste, updateTaste } from './ai/taste'
 import { broadcast } from './bus'
 import { downloads } from './downloads'
 import { FFMPEG_DOWNLOAD_URL, ffmpegStatus, installFfmpeg, invalidateFfmpeg } from './ffmpeg'
@@ -49,6 +65,21 @@ function handle<T>(channel: string, fn: (...args: any[]) => Promise<T> | T): voi
       return failure(err)
     }
   })
+}
+
+/** Run one cancellable AI request, streaming its progress to the window. */
+async function aiRun<T>(requestId: string, fn: (emit: (p: Omit<AiProgress, 'requestId'>) => void, signal: AbortSignal) => Promise<T>): Promise<T> {
+  const id = String(requestId || Date.now())
+  const signal = beginRequest(id)
+  const emit = (progress: Omit<AiProgress, 'requestId'>): void => broadcast(IPC.aiProgress, { requestId: id, ...progress })
+  try {
+    return await fn(emit, signal)
+  } catch (err) {
+    if (signal.aborted) throw new Error('Canceled.')
+    throw err
+  } finally {
+    endRequest(id)
+  }
 }
 
 async function toolStatusBundle(fresh = false): Promise<ToolStatusBundle> {
@@ -260,6 +291,42 @@ export function registerIpc(): void {
     libraryState.markSynced(id, added.map(({ entry }) => entry.id))
     return { title: saved.title, added: added.length }
   })
+
+  handle(IPC.aiStatus, (): AiStatus => aiStatus())
+  handle(IPC.aiSetKey, (key: string): AiStatus => {
+    saveApiKey(String(key ?? ''))
+    return aiStatus()
+  })
+  handle(IPC.aiClearKey, (): AiStatus => {
+    clearApiKey()
+    return aiStatus()
+  })
+  handle(IPC.aiListModels, (): Promise<AiModel[]> => listModels())
+  handle(IPC.aiTest, async (): Promise<AiTestResult> => {
+    const model = requireReady()
+    const started = Date.now()
+    const reply = await chat([{ role: 'user', content: 'Reply with exactly: YTD Studio is connected.' }], { temperature: 0 })
+    return { model, reply: reply.slice(0, 200), latencyMs: Date.now() - started }
+  })
+  handle(IPC.aiDiscover, (req: DiscoverRequest): Promise<DiscoverResult> => {
+    if (!req) throw new Error('Nothing to discover.')
+    return aiRun(req.requestId, (emit, signal) => discover(req, (stage) => emit({ stage }), signal))
+  })
+  handle(IPC.aiSummarize, (req: InsightRequest): Promise<InsightResult> => {
+    if (!req || !req.url) throw new Error('Open a video first.')
+    return aiRun(req.requestId, (emit, signal) => summarize(req, emit, signal))
+  })
+  handle(IPC.aiAsk, (req: AskRequest): Promise<InsightResult> => {
+    if (!req || !req.url) throw new Error('Open a video first.')
+    return aiRun(req.requestId, (emit, signal) => ask(req, emit, signal))
+  })
+  handle(IPC.aiOrganize, (requestId: string): Promise<OrganizeResult> => aiRun(requestId, (emit, signal) => organize(requestId, emit, signal)))
+  handle(IPC.aiCancel, (requestId: string): true => {
+    cancelRequest(String(requestId))
+    return true
+  })
+  handle(IPC.aiTaste, (): TasteProfile => taste())
+  handle(IPC.aiTasteUpdate, (action: TasteAction): TasteProfile => updateTaste(action))
 
   handle(IPC.notifyToast, (payload: unknown): true => {
     broadcast(IPC.notifyToast, payload)

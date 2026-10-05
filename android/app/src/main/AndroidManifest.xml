@@ -16,6 +16,9 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
+    <!-- usesCleartextTraffic: lets the AI features talk to a self-hosted Ollama on the home network
+         (http://192.168.x.x:11434). Everything else the app fetches is HTTPS, and the Ollama API key
+         is never sent over plain HTTP to another machine. -->
     <application
         android:name=".YtdApp"
         android:allowBackup="false"
@@ -24,6 +27,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.YtdStudio"
         tools:targetApi="36">
 

@@ -617,3 +617,66 @@ export function mimeForExt(ext: string): string {
   }
   return map[ext.toLowerCase()] ?? 'application/octet-stream'
 }
+
+/** The full yt-dlp info JSON for one video (captions, chapters, description...). */
+export async function infoJson(url: string): Promise<Record<string, unknown>> {
+  const args = [...baseArgs(), '--no-progress', '--no-warnings', '--no-playlist', '--skip-download', '-J', '--', url]
+  return runJson(args, 90000)
+}
+
+export interface SearchHit {
+  id: string
+  url: string
+  title: string
+  channel: string | null
+  duration: number | null
+  views: number | null
+  description: string | null
+  live: boolean
+  short: boolean
+}
+
+/** Run a YouTube results page (search URL with filters) and return its videos, flat. */
+export async function searchVideos(searchUrl: string, limit: number): Promise<SearchHit[]> {
+  const args = [...baseArgs(), '--no-progress', '--no-warnings', '-J', '--flat-playlist', '--playlist-end', String(limit), '--', searchUrl]
+  const info = await runJson(args, 75000)
+  const raw = Array.isArray(info.entries) ? (info.entries as Record<string, unknown>[]) : []
+  const out: SearchHit[] = []
+  raw.filter(Boolean).forEach(function (e) {
+    const id = str(e.id)
+    const link = str(e.url) ?? ''
+    // Flat search pages also list channels and playlists; keep only videos (11-character ids).
+    if (!id || !/^[\w-]{11}$/.test(id)) return
+    const liveStatus = str(e.live_status)
+    if (liveStatus === 'is_upcoming') return
+    out.push({
+      id,
+      url: 'https://www.youtube.com/watch?v=' + id,
+      title: str(e.title) ?? id,
+      channel: str(e.channel) ?? str(e.uploader),
+      duration: num(e.duration),
+      views: num(e.view_count),
+      description: str(e.description),
+      live: liveStatus === 'is_live',
+      short: link.indexOf('/shorts/') >= 0,
+    })
+  })
+  return out
+}
+
+/**
+ * Download one caption track as WebVTT into dir and return its path (null when nothing was written).
+ * auto: use YouTube's automatic captions instead of uploaded subtitles.
+ */
+export async function downloadCaptions(url: string, lang: string, auto: boolean, dir: string): Promise<string | null> {
+  const args = [
+    ...baseArgs(), '--no-progress', '--no-warnings', '--no-playlist', '--skip-download',
+    auto ? '--write-auto-subs' : '--write-subs', '--sub-langs', lang, '--sub-format', 'vtt/best',
+    '-P', dir, '-o', 'captions.%(ext)s', '--', url,
+  ]
+  const res = await runYtdlp(args, { timeoutMs: 90000 })
+  if (!res.ok) log('captions: yt-dlp exited ' + res.code + ' ' + cleanError(res.stderr))
+  const { readdirSync } = await import('node:fs')
+  const file = readdirSync(dir).find(function (name) { return name.startsWith('captions.') && name.endsWith('.vtt') })
+  return file ? join(dir, file) : null
+}
