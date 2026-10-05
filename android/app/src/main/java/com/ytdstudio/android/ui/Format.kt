@@ -26,3 +26,22 @@ fun formatDuration(seconds: Double?): String {
 /** First http(s) link in shared text ("Check this out https://youtu.be/..."). */
 fun extractUrl(text: String?): String? =
     text?.let { Regex("https?://\\S+").find(it)?.value?.trimEnd('.', ',', ')', '"', '\'') }
+
+fun formatCount(count: Long): String = when {
+    count >= 1_000_000_000 -> "%.1fB".format(count / 1_000_000_000.0)
+    count >= 1_000_000 -> "%.1fM".format(count / 1_000_000.0)
+    count >= 1_000 -> "%.1fK".format(count / 1_000.0)
+    else -> count.toString()
+}
+
+/** "3h ago", "just now": how long since [ms]. */
+fun timeAgo(ms: Long): String {
+    if (ms <= 0) return "never"
+    val minutes = (System.currentTimeMillis() - ms) / 60_000
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "${minutes}m ago"
+        minutes < 60 * 24 -> "${minutes / 60}h ago"
+        else -> "${minutes / (60 * 24)}d ago"
+    }
+}

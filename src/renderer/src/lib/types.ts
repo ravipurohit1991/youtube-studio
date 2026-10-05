@@ -1,4 +1,4 @@
-import type { DownloadMode } from '@shared/types'
+import type { DownloadMode, LibraryItem } from '@shared/types'
 
 export type ToastTone = 'info' | 'success' | 'error'
 
@@ -14,14 +14,13 @@ export interface ToastItem {
   tone: ToastTone
 }
 
-export interface PlayerModel {
-  title: string
-  subtitle: string | null
-  kind: 'video' | 'audio'
-  videoUrl: string | null
-  audioUrl: string | null
-  separateAudio: boolean
-  absPath: string | null
-  sessionId: string | null
-  duration: number | null
+export type RepeatMode = 'off' | 'all' | 'one'
+
+/** What the player is playing: the items, the order they play in (shuffled or not), and where it is. */
+export interface PlayQueue {
+  items: LibraryItem[]
+  order: number[]
+  pos: number
+  shuffle: boolean
+  repeat: RepeatMode
 }

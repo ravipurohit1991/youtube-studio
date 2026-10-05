@@ -1,11 +1,16 @@
 # YTD Studio
 
 A lightweight Windows desktop app (Electron + TypeScript + React), plus an [Android app](#android-app)
-with the same features, for three jobs:
+with the same features, for four jobs:
 
 1. **Stream**: paste a YouTube link and watch it inside the app. No ads, no popups, and seeking works properly.
-2. **Download**: two modes only. The **whole video (with audio)** as MP4, or **audio only** (MP3/M4A/OPUS/WAV/FLAC). Playlists and batch links are supported, with a live queue.
-3. **Library**: browse everything in your downloads folder as a grid with thumbnails, search it, play it in-app, or open it in your default player.
+2. **Download**: two modes only. The **whole video (with audio)** as MP4, or **audio only** (MP3/M4A/OPUS/WAV/FLAC).
+   **Whole playlists in one click**, each in its own folder in playlist order, optionally **kept in sync**
+   (Sync later downloads only the videos added since). Batch links too, with a live queue.
+3. **Watch**: a player with an up-next queue, autoplay, shuffle, repeat, playback speed and keyboard shortcuts.
+   It **remembers where you stopped** in every video and offers it under *Continue watching*.
+4. **Organize**: a Library with favorites, watched/unwatched, search and sorting, a **Playlists** tab with your
+   downloaded YouTube playlists, and **playlists of your own** (create, rename, reorder, play all, shuffle).
 
 Plus a **Settings** tab for the downloads folder, quality defaults, and the tools behind the scenes.
 
@@ -82,9 +87,10 @@ src/
                      serves files from the downloads folder, proxies thumbnails
     downloads.ts     queue, concurrency, live progress parsing, history persistence
     library.ts       scans the downloads folder and pairs sidecar thumbnails/metadata
+    library-state.ts favorites, watch progress, your playlists and synced YouTube playlists (library-state.json)
     settings.ts      JSON-backed settings store
   preload/         contextBridge API exposed as window.api
-  renderer/        React UI (Stream / Download / Library / Settings)
+  renderer/        React UI (Stream / Download / Library / Playlists / Settings, player overlay)
   shared/          types and IPC channel names used by both sides
 scripts/smoke.mjs  end-to-end UI test driven over the Chrome DevTools Protocol
 ```
@@ -146,7 +152,8 @@ node scripts/smoke.mjs
 | Video download says it needs ffmpeg, or audio is M4A instead of MP3 | Click **Install ffmpeg** (banner or Settings > Tools). |
 | Stream shows video but it is capped at 360p/720p | Normal for some videos; downloads still get full quality (with ffmpeg). |
 | Age-restricted or private video fails | Settings > **Browser cookies** > pick your browser. |
-| A playlist only queues some videos | Playlists longer than 25 items start with 10 selected. Tick what you want. |
+| A playlist only queues some videos | Use **Download whole playlist**, or tick the videos you want and use **Download N selected**. Up to 2000 entries are read. |
+| A synced playlist re-downloads nothing new | Sync only fetches videos that were not in the playlist when it was saved or last synced. Videos you unticked then are skipped on purpose. |
 | Port 47821 busy | The app automatically falls back to a random free port. |
 
 Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg live in `%APPDATA%/YTD Studio/bin`.
@@ -155,20 +162,25 @@ Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg li
 
 ## Android app
 
-`android/` is a native Kotlin + Jetpack Compose app with the same idea: paste a link (or **Share** a
-video from the YouTube app to *YTD Studio*), download the video or its audio to the phone, and watch
-it offline.
+`android/` is a native Kotlin + Jetpack Compose (Material 3) app with the same idea: paste a link (or
+**Share** a video from the YouTube app to *YTD Studio*), then watch it right away or download it, and
+watch and organize everything offline.
 
 | Tab | What it does |
 | --- | --- |
-| Download | Analyze a link or playlist, pick video (Best / 1080p / 720p ...) or audio (M4A / MP3 / OPUS), live queue with progress, stage ("Downloading video", "Downloading audio track", "Merging video and audio", "Saving..."), history and retry. Downloads keep running in the background with a progress notification. |
-| Stream | Play a link in the built-in player without saving it (no ads). |
-| Library | Everything you downloaded, playable offline in the built-in player, or open/share with any app. |
-| Settings | Default mode and quality, audio format, parallel downloads, yt-dlp version and updates. |
+| Home | One link bar: paste (or share) a video or playlist and a sheet offers **Watch now**, **Listen** (audio only) or **Download** (a whole playlist in one tap, optionally kept in sync). Below: *Continue watching*, *Recently added*, your playlists and favorites. |
+| Library | Videos (grid or list), Music, Playlists and Favorites tabs, with search, sorting, play all and shuffle. Every item has favorite, add to playlist, mark (un)watched, share, open with and delete. Playlists: downloaded YouTube playlists (in order, with Sync) and your own (create, rename, reorder, remove). |
+| Downloads | Live queue with progress and stages ("Downloading video", "Merging video and audio", "Saving..."), history and retry, and your synced playlists with **Sync** / **Sync all**. Downloads keep running in the background with a progress notification. |
+| Settings | Theme (system / light / dark, Material You colors), playback (resume, picture-in-picture, background play for videos), download defaults, playlist folders, yt-dlp version and updates. |
+
+The player runs as a media session: music keeps playing in the background with lock-screen and
+notification controls, videos shrink to **picture-in-picture** when you leave, and the queue has
+next/previous, shuffle, repeat and playback speed. It resumes every file where you left off.
 
 Files are saved through Android's MediaStore into **Movies/YTD Studio** (video) and
-**Music/YTD Studio** (audio), so they show up in Gallery and music players and stay on the phone
-even if the app is uninstalled. No storage permission is needed. Android 10 or newer.
+**Music/YTD Studio** (audio), playlists in a subfolder each, so they show up in Gallery and music
+players and stay on the phone even if the app is uninstalled. No storage permission is needed.
+Android 10 or newer.
 
 ### Does Android need yt-dlp and ffmpeg? Yes, and they are inside the APK
 
@@ -189,7 +201,7 @@ yt-dlp itself is just a Python zip file that this Python runs. That is what allo
 it current: on launch (at most every 12 hours) and from **Settings > Check for update now** it
 fetches the newest release from yt-dlp's GitHub, exactly like the desktop app does.
 
-Because those binaries are per-CPU, the build produces one APK per CPU type (about 60 MB each):
+Because those binaries are per-CPU, the build produces one APK per CPU type (about 100 MB each):
 
 | APK | For |
 | --- | --- |
@@ -237,8 +249,11 @@ cd android
 android/app/src/main/java/com/ytdstudio/android/
   engine/Engine.kt          yt-dlp: init, self-update, probe, download (progress + stages), stream URLs
   service/DownloadService   foreground service running the queue, progress notification, wake lock
-  data/                     job queue + history (JSON), settings, MediaStore save/list (MediaLibrary)
-  ui/                       Compose screens, Media3 player (with 10 MB chunked reads for streams)
+  service/PlaybackService   Media3 session: background playback, media notification, watch progress
+  data/                     job queue + history, library state (favorites, progress, playlists, synced
+                            playlists), settings, MediaStore save/list per playlist folder (MediaLibrary)
+  ui/                       Compose screens (Home, Library, Downloads, Settings, link sheet), player
+                            screen with picture-in-picture, stream sources (10 MB chunked reads)
 ```
 
 ---
@@ -247,7 +262,8 @@ android/app/src/main/java/com/ytdstudio/android/
 
 `pnpm build && pnpm test:e2e` (Linux: wrap it in `xvfb-run -a`) launches the real app with a
 stand-in yt-dlp (`scripts/e2e/fake-ytdlp`) and a fake media host, and checks the queue, live
-progress and stages, history, library grouping and in-app streaming. CI runs it on every push.
+progress and stages, history, library grouping, in-app streaming, whole-playlist downloads into a
+folder and Sync, favorites, your own playlists and resume. CI runs it on every push.
 Needs `python3` and `ffmpeg`.
 
 ---

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { DesktopApi, JobProgressPayload, UpdateStatus } from '@shared/types'
+import type { DesktopApi, JobProgressPayload, LibraryState, UpdateStatus } from '@shared/types'
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -33,6 +33,26 @@ const api: DesktopApi = {
   openBinFolder: () => invoke(IPC.toolsOpenBin),
   openFfmpegDownload: () => invoke(IPC.toolsOpenFfmpegDownload),
   pickFile: (defaultPath) => invoke(IPC.dialogPickFile, defaultPath),
+  getLibraryState: () => invoke(IPC.libState),
+  toggleFavorite: (key) => invoke(IPC.libToggleFavorite, key),
+  saveProgress: (key, position, duration) => invoke(IPC.libSaveProgress, key, position, duration),
+  setWatched: (key, watched) => invoke(IPC.libSetWatched, key, watched),
+  createPlaylist: (name, items) => invoke(IPC.libCreatePlaylist, name, items),
+  renamePlaylist: (id, name) => invoke(IPC.libRenamePlaylist, id, name),
+  deletePlaylist: (id) => invoke(IPC.libDeletePlaylist, id),
+  addToPlaylist: (id, keys) => invoke(IPC.libAddToPlaylist, id, keys),
+  removeFromPlaylist: (id, key) => invoke(IPC.libRemoveFromPlaylist, id, key),
+  movePlaylistItem: (id, from, to) => invoke(IPC.libMovePlaylistItem, id, from, to),
+  savePlaylist: (playlist) => invoke(IPC.libSavePlaylist, playlist),
+  removeSavedPlaylist: (id) => invoke(IPC.libRemoveSaved, id),
+  syncPlaylist: (id) => invoke(IPC.libSyncPlaylist, id),
+  onLibraryState: (cb) => {
+    const listener = (_event: IpcRendererEvent, payload: LibraryState): void => cb(payload)
+    ipcRenderer.on(IPC.libStateChanged, listener)
+    return function () {
+      ipcRenderer.removeListener(IPC.libStateChanged, listener)
+    }
+  },
   onJobProgress: (cb) => {
     const listener = (_event: IpcRendererEvent, payload: JobProgressPayload): void => cb(payload)
     ipcRenderer.on(IPC.jobsProgress, listener)

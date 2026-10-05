@@ -7,6 +7,7 @@ import { downloads } from './downloads'
 import { ffmpegStatus, installFfmpeg } from './ffmpeg'
 import { registerIpc } from './ipc'
 import { initLogger, log, logError } from './logger'
+import { libraryState } from './library-state'
 import { startMediaServer, stopMediaServer } from './media-server'
 import { settings } from './settings'
 import { installYtdlp, resolveYtdlp } from './ytdlp'
@@ -116,6 +117,7 @@ async function bootstrap(): Promise<void> {
   log('YTD Studio starting, version', app.getVersion())
   settings.load()
   downloads.init()
+  libraryState.load()
   registerBroadcaster(function () {
     return BrowserWindow.getAllWindows().map(function (win) { return win.webContents })
   })
@@ -146,7 +148,12 @@ if (!gotLock) {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
+  app.on('before-quit', function () {
+    libraryState.flush()
+  })
+
   app.on('window-all-closed', function () {
+    libraryState.flush()
     stopMediaServer()
     if (process.platform !== 'darwin') app.quit()
   })
