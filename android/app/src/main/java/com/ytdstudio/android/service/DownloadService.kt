@@ -38,6 +38,8 @@ class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val running = Collections.synchronizedMap(mutableMapOf<String, Job>())
     private val canceled = Collections.synchronizedSet(mutableSetOf<String>())
+    /** Stopped with Pause: the partial file is kept so Resume continues from it. */
+    private val pausing = Collections.synchronizedSet(mutableSetOf<String>())
     private var wakeLock: PowerManager.WakeLock? = null
     private var inForeground = false
     private val store get() = YtdApp.instance.jobs
@@ -57,6 +59,10 @@ class DownloadService : Service() {
         when (intent?.action) {
             ACTION_CANCEL -> intent.getStringExtra(EXTRA_JOB_ID)?.let { cancelJob(it) }
             ACTION_CANCEL_ALL -> store.jobs.value.filter { it.status == JobStatus.QUEUED || it.status.isActive }.forEach { cancelJob(it.id) }
+            ACTION_PAUSE -> intent.getStringExtra(EXTRA_JOB_ID)?.let { pauseJob(it) }
+            ACTION_PAUSE_ALL -> store.jobs.value.filter { it.status == JobStatus.QUEUED || it.status == JobStatus.DOWNLOADING }
+                .sortedBy { if (it.status == JobStatus.QUEUED) 0 else 1 }
+                .forEach { pauseJob(it.id) }
         }
         pump()
         stopIfIdle()
@@ -77,11 +83,25 @@ class DownloadService : Service() {
 
     private fun cancelJob(id: String) {
         val job = store.get(id) ?: return
-        if (job.status == JobStatus.QUEUED) {
+        if (job.status == JobStatus.QUEUED || job.status == JobStatus.PAUSED) {
             store.update(id) { it.copy(status = JobStatus.CANCELED, stage = "Stopped", error = null, finishedAt = System.currentTimeMillis()) }
+            File(filesDir, "work/$id").deleteRecursively()
             return
         }
         canceled += id
+        Engine.cancel(id)
+        running[id]?.cancel()
+    }
+
+    private fun pauseJob(id: String) {
+        val job = store.get(id) ?: return
+        if (job.status == JobStatus.QUEUED) {
+            store.pause(id)
+            return
+        }
+        if (job.status != JobStatus.DOWNLOADING) return
+        pausing += id
+        store.update(id) { it.copy(stage = "Pausing…") }
         Engine.cancel(id)
         running[id]?.cancel()
     }
@@ -97,6 +117,7 @@ class DownloadService : Service() {
             job.invokeOnCompletion {
                 running.remove(next.id)
                 canceled.remove(next.id)
+                pausing.remove(next.id)
                 pump()
                 stopIfIdle()
             }
@@ -107,8 +128,18 @@ class DownloadService : Service() {
     private suspend fun run(job: DownloadJob) {
         val work = File(filesDir, "work/${job.id}")
         var lastWrite = 0L
+        var keepWork = false
+        val settings = YtdApp.instance.prefs.settings.value
+        val options = Engine.Options(
+            section = job.section,
+            sponsorBlock = job.sponsorBlock,
+            rateLimit = settings.rateLimit,
+            embed = settings.embedMetadata,
+            codec = settings.videoCodec,
+            resume = work.isDirectory && (work.list()?.isNotEmpty() == true),
+        )
         try {
-            val file = Engine.download(job.id, job.url, job.mode, job.height, job.audioFormat, work, filePrefix = job.filePrefix, listener = object : Engine.Listener {
+            val file = Engine.download(job.id, job.url, job.mode, job.height, job.audioFormat, work, filePrefix = job.filePrefix, options = options, listener = object : Engine.Listener {
                 override fun onProgress(p: Engine.Progress) {
                     val now = System.currentTimeMillis()
                     if (now - lastWrite < 300) return
@@ -139,7 +170,7 @@ class DownloadService : Service() {
                     store.update(job.id, persistNow = false) { it.copy(log = (it.log + line + "\n").takeLast(4000)) }
                 }
             })
-            if (job.id in canceled) throw YoutubeDL.CanceledException()
+            if (job.id in canceled || job.id in pausing) throw YoutubeDL.CanceledException()
             val video = MediaLibrary.isVideoFile(file.name)
             val place = MediaLibrary.folderLabel(video) + (MediaLibrary.safeFolder(job.folder)?.let { "/$it" } ?: "")
             store.update(job.id) { it.copy(status = JobStatus.SAVING, stage = "Saving to $place", percent = 99.5f) }
@@ -154,6 +185,11 @@ class DownloadService : Service() {
             }
             Notifications.finished(this, job.id, store.get(job.id)?.title ?: job.title, true, "Saved to $place. Tap to play.", uri, video)
         } catch (e: Throwable) {
+            if (job.id in pausing) {
+                keepWork = true
+                store.update(job.id) { it.copy(status = JobStatus.PAUSED, stage = "Paused", speed = null, eta = null, error = null) }
+                return
+            }
             val wasCanceled = job.id in canceled || e is YoutubeDL.CanceledException || e is kotlinx.coroutines.CancellationException
             if (!wasCanceled) Log.e(TAG, "download failed", e)
             store.update(job.id) {
@@ -166,7 +202,7 @@ class DownloadService : Service() {
             }
             if (!wasCanceled) Notifications.finished(this, job.id, job.title, false, "Download failed: " + (e.message ?: "unknown error").take(120), null)
         } finally {
-            work.deleteRecursively()
+            if (!keepWork) work.deleteRecursively()
         }
     }
 
@@ -220,11 +256,24 @@ class DownloadService : Service() {
         private const val TAG = "DownloadService"
         const val ACTION_CANCEL = "com.ytdstudio.android.CANCEL"
         const val ACTION_CANCEL_ALL = "com.ytdstudio.android.CANCEL_ALL"
+        const val ACTION_PAUSE = "com.ytdstudio.android.PAUSE"
+        const val ACTION_PAUSE_ALL = "com.ytdstudio.android.PAUSE_ALL"
         const val EXTRA_JOB_ID = "jobId"
 
         /** Start (or poke) the service so it picks up newly queued jobs. */
         fun kick(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java))
+        }
+
+        fun pause(context: Context, jobId: String) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, DownloadService::class.java).setAction(ACTION_PAUSE).putExtra(EXTRA_JOB_ID, jobId),
+            )
+        }
+
+        fun pauseAll(context: Context) {
+            ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java).setAction(ACTION_PAUSE_ALL))
         }
 
         fun cancel(context: Context, jobId: String) {

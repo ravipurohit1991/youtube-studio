@@ -45,3 +45,28 @@ fun timeAgo(ms: Long): String {
         else -> "${minutes / (60 * 24)}d ago"
     }
 }
+
+/** The 11-character id of a watch / youtu.be / shorts link. */
+fun youTubeId(url: String): String? =
+    Regex("(?:[?&]v=|youtu\\.be/|/shorts/|/embed/|/live/)([\\w-]{11})").find(url)?.groupValues?.get(1)
+
+/** "Good morning" etc. for the Home greeting. */
+fun greeting(): String {
+    val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    return when {
+        h < 5 -> "Good night"
+        h < 12 -> "Good morning"
+        h < 18 -> "Good afternoon"
+        else -> "Good evening"
+    }
+}
+
+/** "12 h 40 min", "35 min": total play time in words. */
+fun formatHours(seconds: Double): String {
+    if (seconds <= 0) return "0 min"
+    val minutes = (seconds / 60).toLong()
+    if (minutes < 60) return "$minutes min"
+    val h = minutes / 60
+    val m = minutes % 60
+    return "$h h" + if (m > 0) " $m min" else ""
+}

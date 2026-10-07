@@ -31,6 +31,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.automirrored.rounded.ViewList
@@ -128,7 +131,9 @@ fun LibraryScreen(vm: MainViewModel, ai: AiViewModel) {
     val favorites = matches.filter { it.key in state.favorites }.sortedByKey(sort)
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.statusBarsPadding().padding(start = 16.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (vm.librarySelection.isNotEmpty()) {
+            SelectionBar(vm)
+        } else Row(Modifier.statusBarsPadding().padding(start = 16.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Library", style = MaterialTheme.typography.headlineMedium)
                 Text(
@@ -207,7 +212,7 @@ fun LibraryScreen(vm: MainViewModel, ai: AiViewModel) {
                     item(span = { GridItemSpan(maxLineSpan) }) { permissionCard() }
                     item(span = { GridItemSpan(maxLineSpan) }) { PlayAllRow(context, videos, "videos") }
                     if (videos.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { NothingHere(vm, query, Icons.Rounded.VideoLibrary, "No videos yet") }
-                    items(videos, key = { it.key }) { item -> MediaTile(item, state, itemActions(context, vm, item, videos)) }
+                    items(videos, key = { it.key }) { item -> MediaTile(item, state, itemActions(context, vm, item, videos), selection = selectionFor(vm, item)) }
                 }
             } else {
                 ItemList(vm, state, videos, header = {
@@ -223,6 +228,27 @@ fun LibraryScreen(vm: MainViewModel, ai: AiViewModel) {
             else -> ItemList(vm, state, favorites, header = { PlayAllRow(context, favorites, "favorites") }, empty = {
                 EmptyState(Icons.Rounded.FavoriteBorder, "No favorites yet", "Open the menu on any video or song and pick \"Add to favorites\".")
             })
+        }
+    }
+}
+
+private fun selectionFor(vm: MainViewModel, item: LibraryItem) =
+    Selection(item.key in vm.librarySelection, vm.librarySelection.isNotEmpty()) { vm.toggleSelected(item.key) }
+
+/** Replaces the header while items are selected: what can be done with all of them at once. */
+@Composable
+private fun SelectionBar(vm: MainViewModel) {
+    val context = LocalContext.current
+    val count = vm.librarySelection.size
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { vm.clearSelection() }) { Icon(Icons.Rounded.Close, "Done") }
+            Text("$count selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onPrimaryContainer)
+            IconButton(onClick = { play(context, vm.selectedItems()); vm.clearSelection() }) { Icon(Icons.Rounded.PlayArrow, "Play selected") }
+            IconButton(onClick = { vm.addToPlaylist = vm.librarySelection.toList(); vm.clearSelection() }) { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to playlist") }
+            IconButton(onClick = { vm.favoriteSelected() }) { Icon(Icons.Rounded.Favorite, "Favorite") }
+            IconButton(onClick = { vm.markSelectedWatched() }) { Icon(Icons.Rounded.Visibility, "Mark watched") }
+            IconButton(onClick = { vm.pendingBulkDelete = vm.selectedItems() }) { Icon(Icons.Rounded.Delete, "Delete") }
         }
     }
 }
@@ -270,7 +296,7 @@ private fun ItemList(
     LazyColumn(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), modifier = Modifier.fillMaxSize()) {
         item { header() }
         if (items.isEmpty()) item { empty() }
-        items(items, key = { it.key }) { item -> MediaRow(item, state, itemActions(context, vm, item, items)) }
+        items(items, key = { it.key }) { item -> MediaRow(item, state, itemActions(context, vm, item, items), selection = selectionFor(vm, item)) }
     }
 }
 

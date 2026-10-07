@@ -28,9 +28,10 @@ class JobStore(context: Context) {
     private fun load(): List<DownloadJob> = try {
         if (!file.exists()) emptyList() else {
             JSONArray(file.readText()).objects().map { DownloadJob.fromJson(it) }.map { job ->
-                // A job that was running when the process died cannot be resumed mid-stream.
+                // A job that was running when the process died is kept as paused: yt-dlp continues
+                // from the partial file in its work folder when it is resumed.
                 if (job.status.isActive || job.status == JobStatus.QUEUED) {
-                    job.copy(status = JobStatus.FAILED, stage = "Failed", error = "Interrupted when the app was closed. Tap retry.", finishedAt = job.finishedAt ?: System.currentTimeMillis())
+                    job.copy(status = JobStatus.PAUSED, stage = "Paused when the app closed", speed = null, eta = null)
                 } else job
             }
         }
@@ -66,6 +67,9 @@ class JobStore(context: Context) {
             videoId = req.videoId,
             folder = req.folder,
             playlistIndex = req.playlistIndex,
+            clipStart = req.clipStart,
+            clipEnd = req.clipEnd,
+            sponsorBlock = req.sponsorBlock,
             createdAt = nextCreatedAt(),
         )
         state.update { listOf(job) + it }
@@ -83,6 +87,37 @@ class JobStore(context: Context) {
             status = JobStatus.QUEUED, percent = 0f, downloadedBytes = 0, totalBytes = 0, speed = null, eta = null,
             error = null, stage = "Waiting in queue", log = "", outputUri = null, outputName = null, finishedAt = null, createdAt = nextCreatedAt(),
         )
+    }
+
+    /** A waiting job stays in the list but is skipped until it is resumed. */
+    fun pause(id: String) = update(id) {
+        if (it.status == JobStatus.QUEUED || it.status.isActive) it.copy(status = JobStatus.PAUSED, stage = "Paused", speed = null, eta = null) else it
+    }
+
+    fun resume(id: String) = update(id) {
+        if (it.status == JobStatus.PAUSED) it.copy(status = JobStatus.QUEUED, stage = "Waiting in queue", error = null) else it
+    }
+
+    /** Put a waiting (or paused) job at the front of the queue. */
+    fun prioritize(id: String) {
+        val first = state.value.filter { it.status == JobStatus.QUEUED }.minOfOrNull { it.createdAt } ?: System.currentTimeMillis()
+        update(id) {
+            if (it.status == JobStatus.QUEUED || it.status == JobStatus.PAUSED) {
+                it.copy(status = JobStatus.QUEUED, stage = "Waiting in queue", createdAt = minOf(first, it.createdAt) - 1)
+            } else it
+        }
+    }
+
+    fun resumeAll(): Int {
+        val paused = state.value.filter { it.status == JobStatus.PAUSED }
+        paused.forEach { resume(it.id) }
+        return paused.size
+    }
+
+    fun retryFailed(): Int {
+        val failed = state.value.filter { it.status == JobStatus.FAILED }.sortedBy { it.createdAt }
+        failed.forEach { retry(it.id) }
+        return failed.size
     }
 
     fun remove(id: String) {

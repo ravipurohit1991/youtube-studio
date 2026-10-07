@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve as resolvePath, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -56,6 +56,20 @@ export function getMediaPort(): number {
 
 export function mediaUrlForPath(absPath: string): string {
   return 'http://127.0.0.1:' + listenPort + '/f/' + base64url(absPath)
+}
+
+/** A subtitle file next to a download, served as WebVTT (the only format a <track> element reads). */
+export function subtitleUrlForPath(absPath: string): string {
+  return 'http://127.0.0.1:' + listenPort + '/sub/' + base64url(absPath)
+}
+
+/** SRT to WebVTT: a header, and "," instead of "." before the milliseconds. */
+export function srtToVtt(text: string): string {
+  const body = text
+    .replace(/^﻿/, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2')
+  return body.startsWith('WEBVTT') ? body : 'WEBVTT\n\n' + body
 }
 
 export function imageProxyUrl(remote: string | null): string | null {
@@ -309,6 +323,31 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return
     }
     serveFile(req, res, absPath)
+    return
+  }
+  if (path.indexOf('/sub/') === 0) {
+    let absPath = ''
+    try {
+      absPath = resolvePath(normalize(fromBase64url(decodeURIComponent(path.slice(5)))))
+    } catch {
+      res.writeHead(400, commonHeaders({ 'Content-Type': 'text/plain' }))
+      res.end('bad path')
+      return
+    }
+    const ext = extname(absPath).toLowerCase()
+    if ((ext !== '.srt' && ext !== '.vtt') || !isInside(allowedRoot(), absPath) || !existsSync(absPath)) {
+      res.writeHead(403, commonHeaders({ 'Content-Type': 'text/plain' }))
+      res.end('not a subtitle in the downloads folder')
+      return
+    }
+    try {
+      const text = readFileSync(absPath, 'utf8')
+      res.writeHead(200, commonHeaders({ 'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'no-store' }))
+      res.end(ext === '.srt' ? srtToVtt(text) : text)
+    } catch {
+      res.writeHead(404, commonHeaders({ 'Content-Type': 'text/plain' }))
+      res.end('unreadable')
+    }
     return
   }
   if (path.indexOf('/s/') === 0) {

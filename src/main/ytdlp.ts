@@ -3,7 +3,7 @@ import { chmodSync, existsSync, renameSync, statSync, unlinkSync, writeFileSync 
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { FormatInfo, ToolStatus, UpdateStatus, VideoMeta, PlaylistEntry, YtdlpUpdateInfo } from '@shared/types'
+import type { FormatInfo, ToolStatus, UpdateStatus, VideoCodec, VideoMeta, PlaylistEntry, YtdlpUpdateInfo } from '@shared/types'
 import { log, logError } from './logger'
 import { binDir, ensureDir } from './paths'
 import { settings } from './settings'
@@ -478,10 +478,12 @@ function mapFormats(info: Record<string, unknown>): FormatInfo[] {
  * With ffmpeg, video and audio are fetched separately (that is the only way to get 1080p and up)
  * and merged. Without it, only formats YouTube serves as one file can be used.
  */
-export function buildFormatSelector(mode: 'video_audio' | 'audio_only', height: number | null, canMerge: boolean): string {
+export function buildFormatSelector(mode: 'video_audio' | 'audio_only', height: number | null, canMerge: boolean, codec: VideoCodec = 'compatible'): string {
   if (mode === 'audio_only') return canMerge ? 'bestaudio/best' : 'bestaudio[ext=m4a]/bestaudio/best'
   const limit = height && height > 0 ? '[height<=' + height + ']' : ''
   if (!canMerge) return 'best' + limit + '[vcodec!=none][acodec!=none]/best' + limit + '/best'
+  // Highest quality whatever the codec (VP9/AV1 are often sharper at the same size).
+  if (codec === 'best') return 'bestvideo' + limit + '+bestaudio/best' + limit + '/best'
   // H.264 first: it plays in every player. AV1/VP9 only when nothing else exists at that size.
   return (
     'bestvideo' + limit + '[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo' + limit + '[ext=mp4]+bestaudio[ext=m4a]/bestvideo' +

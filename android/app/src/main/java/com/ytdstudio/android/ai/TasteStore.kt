@@ -42,6 +42,21 @@ class TasteStore(context: Context) {
         edit { t -> t.copy(recent = (listOf(text) + t.recent.filterNot { it.equals(text, ignoreCase = true) }).take(MAX_RECENT)) }
     }
 
+    fun exportJson(): JSONObject = toJson(stateFlow.value)
+
+    /** Add feedback from a backup; what is here already wins. */
+    fun merge(o: JSONObject) {
+        val incoming = fromJson(o)
+        edit { t ->
+            t.copy(
+                liked = (t.liked + incoming.liked.filter { x -> t.liked.none { it.id == x.id } }).take(MAX_ITEMS),
+                disliked = (t.disliked + incoming.disliked.filter { x -> t.disliked.none { it.id == x.id } }).take(MAX_ITEMS),
+                blockedChannels = (t.blockedChannels + incoming.blockedChannels).distinctBy { it.lowercase() },
+                recent = (t.recent + incoming.recent).distinct().take(MAX_RECENT),
+            )
+        }
+    }
+
     fun isBlocked(channel: String?): Boolean =
         channel != null && stateFlow.value.blockedChannels.any { it.equals(channel, ignoreCase = true) }
 

@@ -3,7 +3,7 @@ import { extname, join, relative, basename, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import type { LibraryItem, MediaKind } from '@shared/types'
 import { log, logError } from './logger'
-import { imageProxyUrl, mediaUrlForPath } from './media-server'
+import { imageProxyUrl, mediaUrlForPath, subtitleUrlForPath } from './media-server'
 import { settings } from './settings'
 
 const VIDEO_EXT = ['.mp4', '.mkv', '.webm', '.mov', '.m4v', '.avi', '.flv', '.3gp', '.ts']
@@ -179,6 +179,12 @@ export async function scanLibrary(): Promise<LibraryItem[]> {
       mediaUrl: mediaUrlForPath(m.full),
       videoId,
       subtitleFiles: side.subs.map(function (s) { return basename(s) }),
+      subtitles: side.subs
+        .filter(function (s) { return /\.(srt|vtt)$/i.test(s) })
+        .map(function (s) {
+          const lang = /\.([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,4})?)\.(srt|vtt)$/i.exec(s)
+          return { lang: lang ? lang[1] : 'sub', url: subtitleUrlForPath(s) }
+        }),
       isPlaylistPart: typeof info?.playlist_index === 'number' || !!info?.playlist_title || m.dir !== root,
       key: relative(root, m.full).split(sep).join('/'),
       folder: m.dir === root ? null : relative(root, m.dir).split(sep).join('/'),

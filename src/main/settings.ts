@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type { Settings, TabId } from '@shared/types'
+import type { AccentName, Settings, TabId } from '@shared/types'
 import { log, logError } from './logger'
 import { defaultDownloadsDir, ensureDir, settingsFile } from './paths'
 
@@ -23,17 +23,27 @@ function defaults(): Settings {
     proxy: '',
     cookiesFromBrowser: '',
     filenameTemplate: '%(title)s [%(id)s].%(ext)s',
-    lastTab: 'stream',
+    lastTab: 'home',
     playlistFolders: true,
     resumePlayback: true,
     aiHost: DEFAULT_AI_HOST,
     aiModel: '',
     aiPersonalize: true,
     aiUseWeb: false,
+    accent: 'crimson',
+    notifyOnComplete: true,
+    watchClipboard: true,
+    rateLimit: '',
+    sponsorBlock: false,
+    embedMetadata: true,
+    autoSyncHours: 0,
+    videoCodec: 'compatible',
   }
 }
 
-const VALID_TABS: TabId[] = ['discover', 'stream', 'download', 'library', 'playlists', 'settings']
+const VALID_TABS: TabId[] = ['home', 'discover', 'stream', 'download', 'library', 'playlists', 'settings']
+const ACCENTS: AccentName[] = ['crimson', 'violet', 'ocean', 'emerald', 'amber', 'rose']
+const SYNC_HOURS = [0, 1, 3, 6, 12, 24]
 
 function coerce(raw: Partial<Settings>): Settings {
   const base = defaults()
@@ -43,10 +53,15 @@ function coerce(raw: Partial<Settings>): Settings {
   if (typeof merged.concurrentDownloads !== 'number' || merged.concurrentDownloads < 1) merged.concurrentDownloads = 1
   if (merged.concurrentDownloads > 4) merged.concurrentDownloads = 4
   if (merged.defaultMode !== 'video_audio' && merged.defaultMode !== 'audio_only') merged.defaultMode = 'video_audio'
-  if (!VALID_TABS.includes(merged.lastTab)) merged.lastTab = 'stream'
+  if (!VALID_TABS.includes(merged.lastTab)) merged.lastTab = 'home'
   if (typeof merged.preferredHeight !== 'number' || merged.preferredHeight < 0) merged.preferredHeight = 1080
   merged.aiHost = typeof merged.aiHost === 'string' && merged.aiHost.trim() ? merged.aiHost.trim().replace(/\/+$/, '') : base.aiHost
   if (typeof merged.aiModel !== 'string') merged.aiModel = ''
+  if (!ACCENTS.includes(merged.accent)) merged.accent = base.accent
+  if (!SYNC_HOURS.includes(merged.autoSyncHours)) merged.autoSyncHours = 0
+  if (merged.videoCodec !== 'compatible' && merged.videoCodec !== 'best') merged.videoCodec = 'compatible'
+  // yt-dlp rate syntax: a number with an optional K/M/G suffix.
+  merged.rateLimit = typeof merged.rateLimit === 'string' && /^\d+(\.\d+)?[KMG]?$/i.test(merged.rateLimit.trim()) ? merged.rateLimit.trim().toUpperCase() : ''
   return merged
 }
 

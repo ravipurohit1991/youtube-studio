@@ -16,6 +16,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fakeYtdlpCommand } from './launcher.mjs'
 
 const require = createRequire(import.meta.url)
 const { _electron } = require('playwright-core')
@@ -42,9 +43,10 @@ const ff = (args) => execFileSync(ffmpeg, ['-loglevel', 'error', '-y', ...args])
 ff(['-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25', '-t', '20', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', '-movflags', '+faststart', join(media, 'video.mp4')])
 ff(['-f', 'lavfi', '-i', 'sine=frequency=440:duration=20', '-c:a', 'aac', join(media, 'audio.m4a')])
 ff(['-i', join(media, 'video.mp4'), '-i', join(media, 'audio.m4a'), '-c', 'copy', '-movflags', '+faststart', join(media, 'muxed.mp4')])
-const fake = join(WORK, 'fake-ytdlp')
-copyFileSync(join(HERE, 'fake-ytdlp'), fake)
-chmodSync(fake, 0o755)
+const fakeScript = join(WORK, 'fake-ytdlp')
+copyFileSync(join(HERE, 'fake-ytdlp'), fakeScript)
+chmodSync(fakeScript, 0o755)
+const fake = fakeYtdlpCommand(fakeScript, WORK)
 
 const dl = join(WORK, 'downloads')
 mkdirSync(dl, { recursive: true })
@@ -52,6 +54,7 @@ mkdirSync(dl, { recursive: true })
 copyFileSync(join(media, 'muxed.mp4'), join(dl, 'Song [xyzxyzxyz12].mp4'))
 copyFileSync(join(media, 'audio.m4a'), join(dl, 'Song [xyzxyzxyz12].mp3'))
 writeFileSync(join(dl, 'Song [xyzxyzxyz12].info.json'), JSON.stringify({ id: 'xyzxyzxyz12', title: 'Song Title', uploader: 'Band' }))
+writeFileSync(join(dl, 'Song [xyzxyzxyz12].en.srt'), '1\n00:00:01,000 --> 00:00:03,500\nHello subtitles\n')
 copyFileSync(join(media, 'video.mp4'), join(dl, 'Broken [qqqqqqqqq12].f137.mp4'))
 copyFileSync(join(media, 'audio.m4a'), join(dl, 'Broken [qqqqqqqqq12].f140.m4a'))
 copyFileSync(join(media, 'video.mp4'), join(dl, 'Work [wwwwwwwww12].mp4.part'))
@@ -150,7 +153,7 @@ const ollama = createServer((req, res) => {
 await new Promise((resolve) => ollama.listen(0, '127.0.0.1', resolve))
 const ollamaHost = 'http://127.0.0.1:' + ollama.address().port
 
-const env = { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config, FAKE_MEDIA_BASE: mediaBase }
+const env = { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config, YTD_USER_DATA: join(config, 'YTD Studio'), FAKE_MEDIA_BASE: mediaBase }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.OLLAMA_API_KEY
 const app = await _electron.launch({ executablePath: electronPath, args: ['--no-sandbox', REPO], cwd: REPO, env })
@@ -238,7 +241,7 @@ try {
   })
   check('stream plays and seeks', played.t >= 12 && !played.err, 't=' + played.t.toFixed(1))
   check('separate audio track follows the video', !!played.audio && Math.abs(played.audio.t - played.t) < 1.5 && !played.audio.err)
-  const chips = await page.$$eval('.chip', (els) => els.map((e) => e.textContent))
+  const chips = await page.$$eval('[data-tab="stream"] .chip', (els) => els.map((e) => e.textContent))
   check('HLS-only 1080p rendition skipped for the player', !chips.some((c) => /1080/.test(c)))
   const upstream = readFileSync(serverLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   check('media host saw only bounded ranges with client headers', upstream.length > 0 && upstream.every((r) => /^bytes=\d+-\d+$/.test(r.range) && r.check === 'visionos'))
@@ -423,6 +426,83 @@ try {
   await page.click('.smart-modal button:has-text("Create 2 playlist(s)")')
   const smartMade = await page.waitForSelector('.pl-item:has-text("Test Mix")', { timeout: 10000 }).then(() => true, () => false)
   check('smart playlists are created from the AI grouping', smartMade && (await page.locator('.pl-item:has-text("More Clips")').count()) === 1)
+
+  // ---- v2: Home quick actions, command palette, copied links, pause/resume, clips + SponsorBlock, subtitles
+  const jobsNow = () => page.evaluate(async () => (await window.api.listJobs()).data)
+  const waitJob = async (pred, ms) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < ms) {
+      const hit = (await jobsNow()).find(pred)
+      if (hit) return hit
+      await page.waitForTimeout(250)
+    }
+    return null
+  }
+  await page.click('button.nav-item:has-text("Home")')
+  await page.fill('.link-bar input', 'https://www.youtube.com/watch?v=abc123def45')
+  await page.click('.link-bar button[type="submit"]')
+  const quick = await page.waitForSelector('.quick-card h3:has-text("Test Clip")', { timeout: 20000 }).then(() => true, () => false)
+  check('Home: a pasted link offers watch and one-click downloads', quick && (await page.locator('.quick-card button:has-text("Watch now")').count()) === 1)
+  const before2 = (await jobsNow()).length
+  await page.click('.quick-card button:has-text("Audio ·")')
+  const audioJob = await waitJob((j) => j.mode === 'audio_only' && j.status === 'downloading', 10000)
+  check('Home: one click queues the audio with the default format', !!audioJob && (await jobsNow()).length === before2 + 1 && /mp3 audio/.test(audioJob.qualityLabel))
+
+  // Pause it mid-download, then resume: it finishes.
+  await page.click('button.nav-item:has-text("Download")')
+  await page.waitForSelector('.job .job-stage:has-text("Downloading audio")', { timeout: 15000 })
+  await page.click('.job button[title="Pause"]')
+  const paused = await waitJob((j) => j.id === audioJob?.id && j.status === 'paused', 15000)
+  check('pause stops a running download and keeps it as paused', !!paused)
+  await page.click('.job button:has-text("Resume")')
+  const resumedDone = await waitJob((j) => j.id === audioJob?.id && j.status === 'completed', 40000)
+  check('resume finishes the paused download', !!resumedDone)
+
+  // Command palette: navigate, and act on a pasted link.
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette', { timeout: 5000 })
+  await page.keyboard.type('playlists')
+  await page.keyboard.press('Enter')
+  check('Ctrl+K palette jumps to a tab', (await page.locator('[data-tab="playlists"][data-active="true"]').count()) === 1)
+  await page.keyboard.press('Control+k')
+  await page.fill('.palette input', 'https://youtu.be/abc123def45')
+  const linkActions = await page.$$eval('.palette-item .label', (els) => els.map((e) => e.textContent))
+  check('palette offers watch and download for a pasted link', linkActions.includes('Watch it now') && linkActions.includes('Download the audio'))
+  await page.keyboard.press('Escape')
+
+  // A YouTube link copied elsewhere is offered when the window gets focus.
+  // A fresh id each run: the app ignores a link it has already offered (the clipboard outlives the test).
+  const copiedId = Math.random().toString(36).slice(2, 13).padEnd(11, 'x')
+  await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), 'Look at this https://youtu.be/' + copiedId + ' !')
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const prompted = await page.waitForSelector('.clip-prompt', { timeout: 8000 }).then(() => true, () => false)
+  check('a copied YouTube link is offered to watch or download', prompted && (await page.locator('.clip-prompt button:has-text("Watch")').count()) === 1)
+  if (prompted) await page.click('.clip-prompt button[aria-label="Dismiss"]')
+
+  // Clip + SponsorBlock reach yt-dlp.
+  await page.click('button.nav-item:has-text("Download")')
+  await page.fill('input[placeholder^="https://www.youtube.com/watch?v=... or"]', 'https://www.youtube.com/watch?v=abc123def45')
+  await page.click('button:has-text("Analyze")')
+  await page.waitForSelector('[data-tab="download"] h2:has-text("Test Clip")', { timeout: 20000 })
+  await page.click('details.more summary')
+  await page.fill('input[aria-label="Clip start"]', '0:05')
+  await page.fill('input[aria-label="Clip end"]', '12')
+  await page.click('.more-body .switch:has-text("Skip sponsors")')
+  await page.click('[data-tab="download"] button:has-text("Download video")')
+  const clipJob = await waitJob((j) => /clip 0:05–0:12/.test(j.qualityLabel), 8000)
+  check('clip and SponsorBlock show on the job', !!clipJob && /no sponsors/.test(clipJob.qualityLabel))
+  await waitJob((j) => j.id === clipJob?.id && j.status === 'completed', 40000)
+  const clipCall = readFileSync(join(WORK, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((c) => c.args.includes('--download-sections'))
+  check('yt-dlp gets --download-sections and --sponsorblock-remove', !!clipCall && clipCall.args[clipCall.args.indexOf('--download-sections') + 1] === '*5-12' && clipCall.args.includes('--sponsorblock-remove'))
+
+  // Subtitles next to a download are served to the player as WebVTT.
+  const vtt = await page.evaluate(async () => {
+    const items = (await window.api.scanLibrary()).data
+    const withSubs = items.find((i) => i.subtitles.length)
+    if (!withSubs) return null
+    return { lang: withSubs.subtitles[0].lang, text: await (await fetch(withSubs.subtitles[0].url)).text() }
+  })
+  check('SRT subtitles are served as WebVTT', !!vtt && vtt.lang === 'en' && vtt.text.startsWith('WEBVTT') && vtt.text.includes('00:00:01.000 --> 00:00:03.500'))
 
   // ---- yt-dlp invocation
   const calls = readFileSync(join(WORK, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.args[0] !== '--version')

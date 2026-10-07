@@ -7,6 +7,7 @@ import type {
   AiTestResult,
   AppInfo,
   AskRequest,
+  BackupSummary,
   DiscoverRequest,
   DiscoverResult,
   InsightRequest,
@@ -35,6 +36,7 @@ import { discover } from './ai/discover'
 import { ask, organize, summarize } from './ai/insights'
 import { aiStatus, beginRequest, cancelRequest, chat, clearApiKey, endRequest, listModels, requireReady, saveApiKey } from './ai/ollama'
 import { taste, updateTaste } from './ai/taste'
+import { exportBackup, importBackup } from './backup'
 import { broadcast } from './bus'
 import { downloads } from './downloads'
 import { FFMPEG_DOWNLOAD_URL, ffmpegStatus, installFfmpeg, invalidateFfmpeg } from './ffmpeg'
@@ -45,8 +47,9 @@ import { logError } from './logger'
 import { createStreamSession, dropStreamSession, getMediaPort } from './media-server'
 import { binDir, defaultDownloadsDir, ensureDir } from './paths'
 import { settings } from './settings'
+import { syncSaved } from './sync'
 import { clearProbeCache, describe, resolveStream } from './stream'
-import { checkYtdlpUpdate, installYtdlp, invalidateBinary, probe, ytdlpStatus } from './ytdlp'
+import { checkYtdlpUpdate, installYtdlp, invalidateBinary, ytdlpStatus } from './ytdlp'
 
 function ok<T>(data: T): IpcResult<T> {
   return { ok: true, data }
@@ -197,6 +200,22 @@ export function registerIpc(): void {
     return true
   })
 
+  handle(IPC.jobsPause, (id: string): true => {
+    downloads.pause(id)
+    return true
+  })
+  handle(IPC.jobsResume, (id: string): true => {
+    downloads.resume(id)
+    return true
+  })
+  handle(IPC.jobsPrioritize, (id: string): true => {
+    downloads.prioritize(id)
+    return true
+  })
+  handle(IPC.jobsPauseAll, (): number => downloads.pauseAll())
+  handle(IPC.jobsResumeAll, (): number => downloads.resumeAll())
+  handle(IPC.jobsRetryFailed, (): number => downloads.retryFailed())
+
   handle(IPC.jobsClearFinished, (): true => {
     downloads.clearFinished()
     return true
@@ -262,35 +281,10 @@ export function registerIpc(): void {
   handle(IPC.libSavePlaylist, (playlist: SavedPlaylist): LibraryState => libraryState.savePlaylist({ ...playlist, folder: safeFolderName(playlist.folder) }))
   handle(IPC.libRemoveSaved, (id: string): LibraryState => libraryState.removeSaved(id))
 
-  // Check a saved YouTube playlist for videos added since the last sync and queue only those.
-  handle(IPC.libSyncPlaylist, async (id: string): Promise<SyncResult> => {
-    const saved = libraryState.get().saved.find((p) => p.id === id)
-    if (!saved) throw new Error('That playlist is no longer saved.')
-    const meta = await probe(saved.url)
-    const known = new Set(saved.knownIds)
-    const added = meta.entries
-      .map((entry, index) => ({ entry, index }))
-      .filter(({ entry }) => !!entry.id && !!entry.url && !known.has(entry.id))
-    if (added.length) {
-      downloads.createMany(
-        added.map(({ entry, index }) => ({
-          url: entry.url,
-          videoId: entry.id,
-          title: entry.title,
-          uploader: entry.uploader,
-          thumbnail: entry.thumbnail,
-          duration: entry.duration,
-          mode: saved.mode,
-          height: saved.height,
-          audioFormat: saved.audioFormat,
-          folder: saved.folder,
-          playlistIndex: index + 1,
-        })),
-      )
-    }
-    libraryState.markSynced(id, added.map(({ entry }) => entry.id))
-    return { title: saved.title, added: added.length }
-  })
+  handle(IPC.libSyncPlaylist, (id: string): Promise<SyncResult> => syncSaved(id))
+
+  handle(IPC.backupExport, (): Promise<BackupSummary | null> => exportBackup())
+  handle(IPC.backupImport, (): Promise<BackupSummary | null> => importBackup())
 
   handle(IPC.aiStatus, (): AiStatus => aiStatus())
   handle(IPC.aiSetKey, (key: string): AiStatus => {

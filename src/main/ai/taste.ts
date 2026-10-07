@@ -82,6 +82,22 @@ export function updateTaste(action: TasteAction): TasteProfile {
   return taste()
 }
 
+/** Restore feedback from a backup; with merge, existing feedback wins and new items are added. */
+export function replaceTaste(incoming: Partial<TasteProfile>, merge: boolean): TasteProfile {
+  const base = merge ? load() : empty()
+  const items = (list: unknown): TasteItem[] => (Array.isArray(list) ? list.filter((x) => x && typeof x.id === 'string').map(clean) : [])
+  const byId = (a: TasteItem[], b: TasteItem[]): TasteItem[] => [...a, ...b.filter((x) => !a.some((y) => y.id === x.id))].slice(0, MAX_ITEMS)
+  const strings = (list: unknown): string[] => (Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : [])
+  data = {
+    liked: byId(base.liked, items(incoming.liked)),
+    disliked: byId(base.disliked, items(incoming.disliked)),
+    blockedChannels: Array.from(new Set([...base.blockedChannels, ...strings(incoming.blockedChannels)])),
+    recent: Array.from(new Set([...base.recent, ...strings(incoming.recent)])).slice(0, MAX_RECENT),
+  }
+  save()
+  return taste()
+}
+
 export function rememberRequest(prompt: string): void {
   const text = prompt.trim().slice(0, 200)
   if (!text) return

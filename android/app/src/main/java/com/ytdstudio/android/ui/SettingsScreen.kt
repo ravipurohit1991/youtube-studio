@@ -18,6 +18,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Key
@@ -60,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.ytdstudio.android.ai.AiCore
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -95,8 +105,24 @@ fun SettingsScreen(vm: MainViewModel, ai: AiViewModel) {
                     ) { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }
                 }
             }
+            if (!settings.dynamicColor) {
+                Label("Accent color")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ACCENTS.forEach { (id, spec) ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                Modifier.size(38.dp).clip(CircleShape).background(spec.base).clickable { set { it.copy(accent = id) } },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (settings.accent == id) Icon(Icons.Rounded.Check, spec.label, tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
+                            Text(spec.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
             if (Build.VERSION.SDK_INT >= 31) {
-                Toggle("Colors from your wallpaper", "Material You colors instead of the YTD Studio red.", settings.dynamicColor) { on ->
+                Toggle("Colors from your wallpaper", "Material You colors instead of the accent above.", settings.dynamicColor) { on ->
                     set { it.copy(dynamicColor = on) }
                 }
             }
@@ -127,6 +153,12 @@ fun SettingsScreen(vm: MainViewModel, ai: AiViewModel) {
                 }
             }
             Hint("Above 1080p YouTube only offers VP9/AV1. Recent phones play them; older ones may stutter. Streams are capped at 1080p.")
+            Label("Video codec")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(settings.videoCodec == "compatible", { set { it.copy(videoCodec = "compatible") } }, { Text("Compatible (H.264)") })
+                FilterChip(settings.videoCodec == "best", { set { it.copy(videoCodec = "best") } }, { Text("Best quality") })
+            }
+            Hint("Compatible plays on every phone and TV. Best quality allows VP9/AV1, often sharper but harder on older phones.")
             Label("Audio format")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Prefs.AUDIO_FORMATS.forEach { f ->
@@ -137,11 +169,35 @@ fun SettingsScreen(vm: MainViewModel, ai: AiViewModel) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..3).forEach { n -> FilterChip(settings.concurrentDownloads == n, { set { it.copy(concurrentDownloads = n) } }, { Text("$n") }) }
             }
+            Label("Speed limit")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Prefs.RATE_LIMITS.forEach { r ->
+                    FilterChip(settings.rateLimit == r, { set { it.copy(rateLimit = r) } }, { Text(if (r.isEmpty()) "Unlimited" else r.replace("K", " KB/s").replace("M", " MB/s")) })
+                }
+            }
+            Toggle("Skip sponsors by default", "SponsorBlock cuts sponsor, self-promotion and \"subscribe\" segments out of downloads.", settings.sponsorBlock) { on ->
+                set { it.copy(sponsorBlock = on) }
+            }
+            Toggle("Embed tags and chapters", "Players show the title, channel and chapters of downloaded videos.", settings.embedMetadata) { on ->
+                set { it.copy(embedMetadata = on) }
+            }
             Toggle("A folder per playlist", "Playlist downloads go into their own folder, in playlist order, and show up as playlists in the Library.", settings.playlistFolders) { on ->
                 set { it.copy(playlistFolders = on) }
             }
             Hint("Saved to ${MediaLibrary.folderLabel(true)} (video) and ${MediaLibrary.folderLabel(false)} (audio). Files stay on the phone even if the app is removed.")
         }
+
+        Section("Follow and sync", Icons.Rounded.Sync) {
+            Hint("Playlists and channels you keep in sync get only their new videos on Sync. Auto-sync does it when you open the app.")
+            Label("Auto-sync")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Prefs.SYNC_HOURS.forEach { h ->
+                    FilterChip(settings.autoSyncHours == h, { set { it.copy(autoSyncHours = h) } }, { Text(if (h == 0) "Off" else if (h == 24) "Daily" else "Every $h h") })
+                }
+            }
+        }
+
+        BackupSection(vm)
 
         Section("yt-dlp", Icons.Rounded.Build) {
             val version = when (val s = engine) {
@@ -164,6 +220,20 @@ fun SettingsScreen(vm: MainViewModel, ai: AiViewModel) {
             )
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** Save or restore favorites, progress, playlists, followed playlists, AI feedback and settings. */
+@Composable
+private fun BackupSection(vm: MainViewModel) {
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> uri?.let { vm.exportBackup(it) } }
+    val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let { vm.importBackup(it) } }
+    Section("Backup", Icons.Rounded.Restore) {
+        Hint("One file with your favorites, watch progress, playlists, followed playlists, AI feedback and settings. Restoring merges it in; the AI key is never included.")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FilledTonalButton(onClick = { save.launch("ytd-studio-backup.json") }) { Text("Save a backup") }
+            OutlinedButton(onClick = { open.launch(arrayOf("application/json", "text/plain", "*/*")) }) { Text("Restore") }
+        }
     }
 }
 

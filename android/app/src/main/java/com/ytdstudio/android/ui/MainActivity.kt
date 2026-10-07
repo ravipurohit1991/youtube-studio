@@ -54,7 +54,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -89,6 +91,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Files may have been added or removed elsewhere (Gallery, a file manager) meanwhile.
         if (vm.libraryLoaded) vm.refreshLibrary()
+        vm.autoSyncIfDue()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -131,11 +134,19 @@ private fun AppScreen(vm: MainViewModel, ai: AiViewModel) {
         }
     }
 
-    BackHandler(enabled = vm.openPlaylist != null) { vm.openPlaylist = null }
+    BackHandler(enabled = vm.librarySelection.isNotEmpty()) { vm.clearSelection() }
+    BackHandler(enabled = vm.openPlaylist != null && vm.librarySelection.isEmpty()) { vm.openPlaylist = null }
     BackHandler(enabled = vm.openPlaylist == null && vm.tab != Tab.HOME) { vm.tab = Tab.HOME }
 
     // Files from an earlier install belong to "another app" now, so Android asks the user before deleting.
     val deleteRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { vm.refreshLibrary() }
+    // Several files at once: one system confirmation, and they are forgotten only if it was accepted.
+    var bulkKeys by remember { mutableStateOf(emptyList<String>()) }
+    val bulkDeleteRequest = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) bulkKeys.forEach { vm.library.forget(it) }
+        bulkKeys = emptyList()
+        vm.refreshLibrary()
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -153,6 +164,7 @@ private fun AppScreen(vm: MainViewModel, ai: AiViewModel) {
                         selected = vm.tab == tab,
                         onClick = {
                             if (tab == Tab.LIBRARY && vm.tab == Tab.LIBRARY) vm.openPlaylist = null
+                            vm.clearSelection()
                             vm.tab = tab
                         },
                         icon = {
@@ -188,6 +200,38 @@ private fun AppScreen(vm: MainViewModel, ai: AiViewModel) {
 
     vm.addToPlaylist?.let { keys ->
         AddToPlaylistDialog(vm, libraryState, keys) { vm.addToPlaylist = null }
+    }
+
+    vm.pendingBulkDelete?.let { list ->
+        AlertDialog(
+            onDismissRequest = { vm.pendingBulkDelete = null },
+            title = { Text("Delete ${list.size} file(s)?") },
+            text = { Text("They are removed from your phone and from every playlist.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.pendingBulkDelete = null
+                    vm.clearSelection()
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        bulkKeys = list.map { it.key }
+                        val sender = MediaStore.createDeleteRequest(context.contentResolver, list.map { it.uri }).intentSender
+                        bulkDeleteRequest.launch(IntentSenderRequest.Builder(sender).build())
+                    } else {
+                        var failed = 0
+                        list.forEach { item ->
+                            try {
+                                context.contentResolver.delete(item.uri, null, null)
+                                vm.forgetDeleted(item)
+                            } catch (e: SecurityException) {
+                                failed++
+                            }
+                        }
+                        if (failed > 0) vm.message = "Android did not allow deleting $failed file(s)."
+                        vm.refreshLibrary()
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { vm.pendingBulkDelete = null }) { Text("Cancel") } },
+        )
     }
 
     vm.pendingDelete?.let { item ->

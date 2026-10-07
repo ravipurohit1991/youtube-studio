@@ -270,11 +270,21 @@ object Engine {
                 entries = entries,
             )
         }
-        val heights = info.optJSONArray("formats")?.objects().orEmpty()
+        val formats = info.optJSONArray("formats")?.objects().orEmpty()
+        val heights = formats
             .filter { (it.optStringOrNull("vcodec") ?: "none") != "none" && it.optInt("height", 0) > 0 }
             .map { it.optInt("height") }
             .distinct()
             .sortedDescending()
+        val duration = info.optDoubleOrNull("duration")
+        val codec = prefs.settings.value.videoCodec
+        val audio = bestAudio(formats)
+        val audioBytes = audio?.let { sizeOf(it, duration) }
+        val sizes = Prefs.HEIGHTS.mapNotNull { h ->
+            val video = bestVideo(formats, h, codec) ?: return@mapNotNull null
+            val bytes = sizeOf(video, duration) ?: return@mapNotNull null
+            h to bytes + (audioBytes ?: 0)
+        }.toMap()
         return VideoMeta(
             url = info.optStringOrNull("webpage_url") ?: url,
             id = info.optStringOrNull("id"),
@@ -286,8 +296,32 @@ object Engine {
             heights = heights,
             isPlaylist = false,
             entries = emptyList(),
+            sizes = sizes,
+            audioSize = audioBytes,
         )
     }
+
+    private fun sizeOf(f: JSONObject, duration: Double?): Long? {
+        f.optDoubleOrNull("filesize")?.let { return it.toLong() }
+        f.optDoubleOrNull("filesize_approx")?.let { return it.toLong() }
+        val tbr = f.optDoubleOrNull("tbr") ?: return null
+        return if (duration != null) (tbr * 1000 * duration / 8).toLong() else null
+    }
+
+    /** The video-only stream a download capped at [height] most likely uses (same preferences as [formatSelector]). */
+    private fun bestVideo(formats: List<JSONObject>, height: Int, codec: String): JSONObject? = formats
+        .filter { (it.optStringOrNull("vcodec") ?: "none") != "none" && (it.optStringOrNull("acodec") ?: "none") == "none" }
+        .filter { height == 0 || it.optInt("height", 0) <= height }
+        .maxByOrNull { f ->
+            var score = f.optInt("height", 0) * 1000.0
+            if (f.optDouble("fps", 0.0) >= 50) score += 200
+            if (codec == "compatible" && (f.optStringOrNull("vcodec") ?: "").startsWith("avc1")) score += 400
+            score + (f.optDoubleOrNull("tbr") ?: 0.0) / 100
+        }
+
+    private fun bestAudio(formats: List<JSONObject>): JSONObject? = formats
+        .filter { (it.optStringOrNull("vcodec") ?: "none") == "none" && (it.optStringOrNull("acodec") ?: "none") != "none" }
+        .maxByOrNull { (it.optDoubleOrNull("abr") ?: it.optDoubleOrNull("tbr") ?: 0.0) + if (it.optStringOrNull("ext") == "m4a") 40 else 0 }
 
     private fun thumbOf(info: JSONObject): String? {
         info.optStringOrNull("thumbnail")?.let { return it }
@@ -298,7 +332,7 @@ object Engine {
      * Same format strategy as the desktop app with ffmpeg present: H.264 + AAC first so the file
      * plays everywhere, VP9/AV1 only when nothing else exists at that size.
      */
-    fun formatSelector(mode: DownloadMode, height: Int, audioFormat: String): String {
+    fun formatSelector(mode: DownloadMode, height: Int, audioFormat: String, codec: String = "compatible"): String {
         if (mode == DownloadMode.AUDIO) {
             // Pick the source that needs no re-encode for the chosen format.
             return when (audioFormat) {
@@ -308,6 +342,8 @@ object Engine {
             }
         }
         val limit = if (height > 0) "[height<=$height]" else ""
+        // Highest quality whatever the codec (VP9/AV1 are often sharper at the same size).
+        if (codec == "best") return "bestvideo$limit+bestaudio/best$limit/best"
         return "bestvideo$limit[vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo$limit[ext=mp4]+bestaudio[ext=m4a]/" +
             "bestvideo$limit+bestaudio/best$limit/best"
     }
@@ -317,6 +353,20 @@ object Engine {
         val total: Long,
         val speedBytes: Double?,
         val etaSeconds: Double?,
+    )
+
+    /** Extra choices for one download. */
+    data class Options(
+        /** yt-dlp --download-sections value ("*120-390"), or null for the whole video. */
+        val section: String? = null,
+        val sponsorBlock: Boolean = false,
+        /** --limit-rate, e.g. "2M"; empty = unlimited. */
+        val rateLimit: String = "",
+        /** Tags and chapters inside the file. */
+        val embed: Boolean = true,
+        val codec: String = "compatible",
+        /** Continue a paused download from its partial file instead of starting over. */
+        val resume: Boolean = false,
     )
 
     interface Listener {
@@ -340,6 +390,7 @@ object Engine {
         listener: Listener,
         /** Prepended to the file name, e.g. "007 - " to keep a playlist folder in order. */
         filePrefix: String = "",
+        options: Options = Options(),
     ): File = withContext(Dispatchers.IO) {
         awaitReady()
         workDir.mkdirs()
@@ -360,12 +411,17 @@ object Engine {
             .addOption("--fragment-retries", 10)
             .addOption("--no-playlist")
             .addOption("--no-mtime")
-            .addOption("--force-overwrites")
             .addOption("-P", workDir.absolutePath)
             // Keep names well under Android's 255-byte limit.
             .addOption("-o", filePrefix.replace("%", "%%") + "%(title).150B [%(id)s].%(ext)s")
-            .addOption("-f", formatSelector(mode, height, audioFormat))
+            .addOption("-f", formatSelector(mode, height, audioFormat, options.codec))
             .addOption("--embed-metadata")
+        // A fresh start overwrites leftovers; a resumed one continues the partial file.
+        if (!options.resume) req.addOption("--force-overwrites")
+        if (options.embed) req.addOption("--embed-chapters")
+        options.section?.let { req.addOption("--download-sections", it) }
+        if (options.sponsorBlock) req.addOption("--sponsorblock-remove", "sponsor,selfpromo,interaction")
+        if (options.rateLimit.isNotBlank()) req.addOption("--limit-rate", options.rateLimit)
         if (mode == DownloadMode.AUDIO) {
             req.addOption("-x")
                 .addOption("--audio-format", audioFormat)
