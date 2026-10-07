@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { Download, House, Library, ListVideo, Play, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react'
+import { ArrowDownToLine, Download, House, Library, ListVideo, Play, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react'
 import type { AiStatus, AppInfo, TabId } from '@shared/types'
-import { ProgressBar, StatusDot } from './common'
+import { MOD, ProgressBar, StatusDot } from './common'
 
 interface NavEntry {
   id: TabId
@@ -74,12 +74,12 @@ export default function Sidebar({
       type="button"
       className={'nav-item' + (tab === entry.id ? ' active' : '')}
       onClick={() => onTab(entry.id)}
-      title={entry.label + ' (Ctrl+' + entry.key + ')'}
+      title={entry.label + ' (' + MOD + '+' + entry.key + ')'}
     >
       {entry.icon}
       <span>{entry.label}</span>
       {badge(entry.id)}
-      <kbd>{'Ctrl ' + entry.key}</kbd>
+      <kbd>{MOD + ' ' + entry.key}</kbd>
     </button>
   )
 
@@ -87,7 +87,7 @@ export default function Sidebar({
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark">
-          <Play size={18} fill="currentColor" />
+          <ArrowDownToLine size={19} strokeWidth={2.6} />
         </div>
         <div className="brand-text">
           <strong>YTD Studio</strong>
@@ -98,7 +98,7 @@ export default function Sidebar({
       <button type="button" className="search-trigger" onClick={onOpenPalette} title="Search, paste a link or run a command">
         <Search size={15} />
         <span className="grow">Search or paste a link</span>
-        <kbd>Ctrl K</kbd>
+        <kbd>{MOD} K</kbd>
       </button>
 
       <nav className="nav">

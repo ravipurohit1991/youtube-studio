@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -21,6 +21,19 @@ const FFMPEG_ARCHIVES = [
   'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
   'https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip',
 ]
+
+/**
+ * macOS: static builds, one zip per program holding just the binary. Native builds for this CPU first;
+ * evermeet.cx only builds for Intel (Apple Silicon runs them through Rosetta).
+ */
+function macSources(): { ffmpeg: string; ffprobe: string }[] {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64'
+  const riedl = 'https://ffmpeg.martin-riedl.de/redirect/latest/macos/' + arch + '/release/'
+  return [
+    { ffmpeg: riedl + 'ffmpeg.zip', ffprobe: riedl + 'ffprobe.zip' },
+    { ffmpeg: 'https://evermeet.cx/ffmpeg/getrelease/zip', ffprobe: 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip' },
+  ]
+}
 
 interface Resolved {
   path: string
@@ -47,6 +60,7 @@ function isFile(p: string): boolean {
  */
 function commonLocations(): string[] {
   const name = exeName('ffmpeg')
+  if (process.platform === 'darwin') return ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/local/bin/ffmpeg']
   if (process.platform !== 'win32') return []
   const home = homedir()
   const local = process.env['LOCALAPPDATA'] || join(home, 'AppData', 'Local')
@@ -165,11 +179,12 @@ let installing: Promise<ToolStatus> | null = null
 
 /** Download ffmpeg + ffprobe into the app data folder. Concurrent callers share one install. */
 export function installFfmpeg(onProgress: (s: UpdateStatus) => void): Promise<ToolStatus> {
-  if (process.platform !== 'win32') {
-    return Promise.reject(new Error('Automatic ffmpeg install is only available on Windows. Install ffmpeg with your package manager.'))
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
+    return Promise.reject(new Error('Automatic ffmpeg install is only available on Windows and macOS. Install ffmpeg with your package manager.'))
   }
   if (!installing) {
-    installing = doInstall(function (update) { onProgress({ ...update, tool: 'ffmpeg' }) }).finally(function () { installing = null })
+    const install = process.platform === 'darwin' ? doInstallMac : doInstall
+    installing = install(function (update) { onProgress({ ...update, tool: 'ffmpeg' }) }).finally(function () { installing = null })
   }
   return installing
 }
@@ -221,9 +236,82 @@ async function doInstall(onProgress: (s: UpdateStatus) => void): Promise<ToolSta
   } finally {
     rmSync(work, { recursive: true, force: true })
   }
+  return finishInstall(onProgress)
+}
+
+function finishInstall(onProgress: (s: UpdateStatus) => void): ToolStatus {
   invalidateFfmpeg()
   const status = ffmpegStatus()
   if (!status.ok) throw new Error('ffmpeg was downloaded but did not start. ' + (status.hint ?? ''))
   onProgress({ phase: 'done', percent: 100, message: 'ffmpeg ' + (status.version ?? '') + ' installed.' })
   return status
+}
+
+/** macOS ships ditto, which unpacks zips without needing anything else installed. */
+function unzipMac(zipPath: string, destDir: string): Promise<void> {
+  return new Promise<void>(function (resolve, reject) {
+    const child = spawn('/usr/bin/ditto', ['-x', '-k', zipPath, destDir])
+    let stderr = ''
+    child.stderr?.on('data', function (chunk: Buffer) { stderr += chunk.toString('utf8') })
+    child.on('error', reject)
+    child.on('close', function (code) {
+      if (code === 0) resolve()
+      else reject(new Error('Could not unpack the ffmpeg archive: ' + (stderr.trim() || 'ditto exited with ' + code)))
+    })
+  })
+}
+
+/** Find a file by name anywhere below dir (the zips hold the binary at the top or one folder down). */
+function findFile(dir: string, name: string): string | null {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isFile() && entry.name === name) return full
+    if (entry.isDirectory() && entry.name !== '__MACOSX') {
+      const found = findFile(full, name)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+async function doInstallMac(onProgress: (s: UpdateStatus) => void): Promise<ToolStatus> {
+  const dir = ensureDir(binDir())
+  const work = join(dir, 'ffmpeg-install')
+  try {
+    onProgress({ phase: 'checking', percent: 0, message: 'Preparing ffmpeg download...' })
+    let lastError: unknown = null
+    for (const source of macSources()) {
+      rmSync(work, { recursive: true, force: true })
+      mkdirSync(work, { recursive: true })
+      try {
+        const binaries: [string, string][] = []
+        for (const name of ['ffmpeg', 'ffprobe'] as const) {
+          log('downloading', name, 'from', source[name])
+          const zip = join(work, name + '.zip')
+          await downloadTo(source[name], zip, onProgress)
+          const out = join(work, name + '-unpacked')
+          mkdirSync(out, { recursive: true })
+          await unzipMac(zip, out)
+          const binary = findFile(out, name)
+          if (!binary) throw new Error('The ' + name + ' archive did not contain ' + name)
+          binaries.push([binary, join(dir, name)])
+        }
+        onProgress({ phase: 'downloading', percent: 99, message: 'Installing ffmpeg...' })
+        for (const [from, to] of binaries) {
+          rmSync(to, { force: true })
+          renameSync(from, to)
+          chmodSync(to, 0o755)
+          // Apple Silicon refuses to run unsigned code; an ad-hoc signature is enough for a local binary.
+          if (spawnSync('/usr/bin/codesign', ['-v', to]).status !== 0) spawnSync('/usr/bin/codesign', ['--force', '-s', '-', to])
+        }
+        return finishInstall(onProgress)
+      } catch (err) {
+        lastError = err
+        log('ffmpeg install failed from', source.ffmpeg, String(err))
+      }
+    }
+    throw new Error('Could not download ffmpeg (' + (lastError instanceof Error ? lastError.message : String(lastError)) + '). Check your connection and try again, or run "brew install ffmpeg".')
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
 }

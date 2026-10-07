@@ -31,7 +31,6 @@ import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Link
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Sync
@@ -265,7 +264,7 @@ private fun Hero(vm: MainViewModel) {
                     Modifier.size(42.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Accent, Violet))),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Rounded.PlayArrow, null, tint = Color.White)
+                    Icon(Icons.Rounded.Download, null, tint = Color.White)
                 }
                 Spacer(Modifier.width(12.dp))
                 Column {

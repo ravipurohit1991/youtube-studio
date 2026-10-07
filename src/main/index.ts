@@ -19,6 +19,30 @@ let mainWindow: BrowserWindow | null = null
 // Tests and screenshots run against a throwaway data folder (Windows ignores APPDATA for this).
 if (process.env.YTD_USER_DATA) app.setPath('userData', process.env.YTD_USER_DATA)
 
+// Apps started from Finder get a bare PATH, so a Homebrew yt-dlp or ffmpeg would go unnoticed.
+if (process.platform === 'darwin') {
+  const extra = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin']
+  const current = (process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin').split(':')
+  process.env.PATH = current.concat(extra.filter(function (dir) { return current.indexOf(dir) < 0 })).join(':')
+}
+
+/**
+ * Windows and Linux run without a menu bar. macOS always shows one, and Cut / Copy / Paste / Quit only
+ * work through its menu roles, so give it the standard app, edit and window menus.
+ */
+function applicationMenu(): Menu | null {
+  if (process.platform !== 'darwin') return null
+  return Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }],
+    },
+    { role: 'windowMenu' },
+  ])
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -55,11 +79,11 @@ function createWindow(): void {
   mainWindow.webContents.on('before-input-event', function (event, input) {
     if (input.type !== 'keyDown') return
     const key = (input.key || '').toLowerCase()
-    if (input.key === 'F12' || (input.control && input.shift && key === 'i')) {
+    if (input.key === 'F12' || ((input.control || input.meta) && input.shift && key === 'i')) {
       mainWindow?.webContents.toggleDevTools()
       event.preventDefault()
     }
-    if (input.control && key === 'r') {
+    if ((input.control || input.meta) && key === 'r') {
       mainWindow?.webContents.reload()
       event.preventDefault()
     }
@@ -86,7 +110,7 @@ function updateTaskbar(): void {
   else mainWindow.setProgressBar(value, { mode: active ? 'normal' : 'none' })
 }
 
-/** Windows notification for a finished or failed download, only when the app is not in front. */
+/** Desktop notification for a finished or failed download, only when the app is not in front. */
 function notifyFinished(job: DownloadJob): void {
   if (!settings.get('notifyOnComplete') || !Notification.isSupported()) return
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) return
@@ -173,7 +197,7 @@ async function bootstrap(): Promise<void> {
   const port = await startMediaServer(MEDIA_PORT)
   log('media server port', port)
   registerIpc()
-  Menu.setApplicationMenu(null)
+  Menu.setApplicationMenu(applicationMenu())
   createWindow()
   startAutoSync()
   setTimeout(function () {
@@ -202,9 +226,14 @@ if (!gotLock) {
     libraryState.flush()
   })
 
+  // macOS keeps the app (and the queue) running with no window; the media server must stay up for the
+  // window the Dock icon reopens.
+  app.on('will-quit', function () {
+    stopMediaServer()
+  })
+
   app.on('window-all-closed', function () {
     libraryState.flush()
-    stopMediaServer()
     if (process.platform !== 'darwin') app.quit()
   })
 

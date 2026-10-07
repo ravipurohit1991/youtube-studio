@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import type { AccentName, AiStatus, AppInfo, AudioFormat, AudioQuality, BrowserName, DownloadMode, Settings, ThemeMode, UpdateStatus, VideoCodec, YtdlpUpdateInfo } from '@shared/types'
 import { errorMessage, unwrap } from '../lib/api'
-import { Kbd, OptionRow, ProgressBar, Switch } from './common'
+import { IS_MAC, Kbd, MOD, OptionRow, ProgressBar, Switch } from './common'
 import AiSettingsCard from './AiSettingsCard'
 import type { PushToast } from '../lib/types'
 
@@ -86,7 +86,7 @@ const SECTIONS: { id: string; label: string; icon: ReactNode }[] = [
 const SHORTCUTS: Array<[string, string]> = [
   ['Ctrl+K', 'Search, paste a link or run any command'],
   ['Ctrl+V', 'Paste a YouTube link anywhere to open it'],
-  ['Ctrl+1', 'Home (Ctrl+2 to Ctrl+7: the other tabs)'],
+  ['Ctrl+1', 'Home (' + MOD + '+2 to ' + MOD + '+7: the other tabs)'],
   ['Ctrl+,', 'Settings'],
   ['Space', 'Player: play / pause'],
   ['J', 'Player: back 10 s (L: forward)'],
@@ -193,7 +193,7 @@ export default function SettingsTab({
                     <i style={{ width: 18, background: theme === 'light' ? '#fff' : '#181c26' }} />
                     <i style={{ flex: 1, background: theme === 'light' ? '#fff' : '#12151c' }} />
                   </div>
-                  {theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'Match Windows'}
+                  {theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : (IS_MAC ? 'Match macOS' : 'Match Windows')}
                 </button>
               ))}
             </div>
@@ -210,7 +210,7 @@ export default function SettingsTab({
 
           <div className="card" id="general">
             <div className="card-title"><Bell size={15} /><span>General</span></div>
-            <OptionRow title="Notify me when downloads finish" hint="A Windows notification when a download completes or fails while the app is in the background.">
+            <OptionRow title="Notify me when downloads finish" hint="A desktop notification when a download completes or fails while the app is in the background.">
               <Switch checked={settings.notifyOnComplete} onChange={(on) => set({ notifyOnComplete: on })} />
             </OptionRow>
             <OptionRow title="Offer copied YouTube links" hint="Copy a link anywhere, come back to the app, and it offers to watch or download it.">

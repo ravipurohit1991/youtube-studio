@@ -1,0 +1,33 @@
+# XcodeGen spec for the iOS app. Generate the Xcode project with:
+#   brew install xcodegen && cd ios && xcodegen generate && open YTDStudio.xcodeproj
+name: YTDStudio
+options:
+  bundleIdPrefix: com.ytdstudio
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  YouTubeKit:
+    url: https://github.com/alexeichhorn/YouTubeKit
+    from: 0.4.9
+targets:
+  YTDStudio:
+    type: application
+    platform: iOS
+    sources:
+      - path: YTDStudio
+    dependencies:
+      - package: YouTubeKit
+    settings:
+      base:
+        PRODUCT_NAME: YTDStudio
+        PRODUCT_BUNDLE_IDENTIFIER: com.ytdstudio.ios
+        INFOPLIST_FILE: YTDStudio/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: 2.0.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+        CODE_SIGN_STYLE: Automatic
+    scheme: {}

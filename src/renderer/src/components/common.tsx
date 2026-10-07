@@ -76,11 +76,15 @@ export function OptionRow({ title, hint, children }: { title: ReactNode; hint?: 
   )
 }
 
+/** On a Mac the shortcuts written as Ctrl+… are pressed (and shown) with Command. */
+export const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
+export const MOD = IS_MAC ? '⌘' : 'Ctrl'
+
 export function Kbd({ keys }: { keys: string }): ReactNode {
   return (
     <>
       {keys.split('+').map((k) => (
-        <kbd key={k}>{k}</kbd>
+        <kbd key={k}>{k === 'Ctrl' ? MOD : k}</kbd>
       ))}
     </>
   )
