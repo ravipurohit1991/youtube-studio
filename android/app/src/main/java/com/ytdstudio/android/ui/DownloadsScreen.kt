@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.ytdstudio.android.ui
 
@@ -6,6 +6,8 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,14 +28,19 @@ import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.SyncDisabled
+import androidx.compose.material.icons.rounded.VerticalAlignTop
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -44,6 +51,8 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,14 +74,24 @@ import com.ytdstudio.android.data.JobStatus
 import com.ytdstudio.android.data.MediaLibrary
 import com.ytdstudio.android.data.SavedPlaylist
 
+private val DownloadJob.pending: Boolean get() = status == JobStatus.QUEUED || status == JobStatus.PAUSED || status.isActive
+
 @Composable
 fun DownloadsScreen(vm: MainViewModel) {
     val jobs by vm.store.jobs.collectAsStateWithLifecycle()
     val state by vm.library.state.collectAsStateWithLifecycle()
+    val settings by vm.prefs.settings.collectAsStateWithLifecycle()
     var showHistory by rememberSaveable { mutableStateOf(false) }
-    val active = jobs.filter { it.status == JobStatus.QUEUED || it.status.isActive }
+    var search by rememberSaveable { mutableStateOf("") }
+    val active = jobs.filter { it.pending }.sortedBy { it.createdAt }
     val finished = jobs.filter { it.status.isFinished }
-    val visible = if (showHistory) finished else active
+    val shown = if (showHistory) {
+        finished.filter { search.isBlank() || it.title.contains(search, ignoreCase = true) || (it.folder?.contains(search, ignoreCase = true) == true) }
+    } else active
+    val running = active.filter { it.status.isActive }
+    val waiting = active.count { it.status == JobStatus.QUEUED }
+    val paused = active.count { it.status == JobStatus.PAUSED }
+    val failed = finished.count { it.status == JobStatus.FAILED }
     val context = LocalContext.current
 
     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
@@ -87,8 +107,57 @@ fun DownloadsScreen(vm: MainViewModel) {
                 LinkBar(vm)
             }
         }
+        if (active.isNotEmpty()) {
+            item {
+                Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.primaryContainer) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${running.size} running · $waiting waiting" + if (paused > 0) " · $paused paused" else "",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                                val speeds = running.mapNotNull { it.speed }
+                                Text(
+                                    (if (speeds.isNotEmpty()) speeds.joinToString(" + ") + " · " else "") + "up to ${settings.concurrentDownloads} at once" +
+                                        if (settings.rateLimit.isNotBlank()) " · capped at ${settings.rateLimit}B/s" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                                )
+                            }
+                            if (running.isNotEmpty() || waiting > 0) {
+                                FilledTonalButton(onClick = { vm.pauseAll() }) {
+                                    Icon(Icons.Rounded.Pause, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Pause all")
+                                }
+                            } else if (paused > 0) {
+                                FilledTonalButton(onClick = { vm.resumeAll() }) {
+                                    Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Resume all")
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        val overall = active.sumOf { if (it.status.isActive) it.percent.toDouble() else 0.0 } / (active.size * 100.0)
+                        LinearProgressIndicator(
+                            progress = { overall.toFloat().coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        )
+                    }
+                }
+            }
+        }
         if (state.saved.isNotEmpty()) {
-            item { SectionHeader("Synced playlists", action = "Sync all") { vm.syncAll() } }
+            item {
+                SectionHeader(
+                    "Followed playlists and channels" + if (settings.autoSyncHours > 0) " · every ${settings.autoSyncHours} h" else "",
+                    action = "Sync all",
+                ) { vm.syncAll() }
+            }
             items(state.saved.sortedBy { it.title.lowercase() }, key = { "saved:" + it.id }) { saved -> SavedPlaylistRow(vm, saved) }
         }
         item {
@@ -101,24 +170,59 @@ fun DownloadsScreen(vm: MainViewModel) {
                         Text("History" + if (finished.isNotEmpty()) " · ${finished.size}" else "")
                     }
                 }
-                if (showHistory && finished.isNotEmpty()) TextButton(onClick = { vm.clearFinished() }) { Text("Clear") }
             }
         }
-        if (visible.isEmpty()) {
+        if (showHistory && finished.isNotEmpty()) {
+            item {
+                Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                        trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Rounded.Close, "Clear") } },
+                        placeholder = { Text("Search history") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                    )
+                }
+            }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (failed > 0) AssistChip(onClick = { vm.retryFailed() }, label = { Text("Retry $failed failed") }, leadingIcon = { Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp)) })
+                    AssistChip(onClick = { vm.clearFinished() }, label = { Text("Clear history") }, leadingIcon = { Icon(Icons.Rounded.Delete, null, Modifier.size(18.dp)) })
+                }
+            }
+        }
+        if (shown.isEmpty()) {
             item {
                 EmptyState(
                     if (showHistory) Icons.Rounded.DownloadDone else Icons.Rounded.Downloading,
-                    if (showHistory) "No finished downloads" else "Nothing downloading",
-                    if (showHistory) "Finished and failed downloads show up here." else "Paste a link above, or share a video from the YouTube app to YTD Studio.",
+                    if (showHistory) (if (search.isNotBlank()) "No matches" else "No finished downloads") else "Nothing downloading",
+                    if (showHistory) "Finished and failed downloads show up here, with play and retry." else "Paste a link above, or share a video from the YouTube app to YTD Studio. You can pause and resume any time.",
                 )
             }
         }
-        items(visible, key = { it.id }) { job ->
+        items(shown, key = { it.id }) { job ->
             JobCard(
                 job,
                 onCancel = { vm.cancel(job.id) },
                 onRetry = { vm.retry(job.id) },
                 onRemove = { vm.remove(job.id) },
+                onPause = { vm.pause(job.id) },
+                onResume = { vm.resume(job.id) },
+                onPrioritize = { vm.prioritize(job.id) },
+                onFix = { fix ->
+                    when (fix) {
+                        ErrorFix.UPDATE_YTDLP -> vm.updateYtdlpAndRetry(job.id)
+                        ErrorFix.RETRY -> vm.retry(job.id)
+                    }
+                },
                 onPlay = {
                     job.outputUri?.let {
                         context.startActivity(PlayerActivity.local(context, Uri.parse(it), job.title, job.mode == DownloadMode.VIDEO))
@@ -175,7 +279,17 @@ private fun SavedPlaylistRow(vm: MainViewModel, saved: SavedPlaylist) {
 }
 
 @Composable
-fun JobCard(job: DownloadJob, onCancel: () -> Unit, onRetry: () -> Unit, onRemove: () -> Unit, onPlay: () -> Unit) {
+fun JobCard(
+    job: DownloadJob,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onRemove: () -> Unit,
+    onPlay: () -> Unit,
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
+    onPrioritize: () -> Unit = {},
+    onFix: (ErrorFix) -> Unit = {},
+) {
     Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
             Thumb(job.thumbnail, Modifier.width(104.dp).aspectRatio(16f / 9f).clip(MaterialTheme.shapes.small))
@@ -195,7 +309,7 @@ fun JobCard(job: DownloadJob, onCancel: () -> Unit, onRetry: () -> Unit, onRemov
                 val stageColor = when (job.status) {
                     JobStatus.COMPLETED -> Ok
                     JobStatus.FAILED -> MaterialTheme.colorScheme.error
-                    JobStatus.CANCELED -> Warn
+                    JobStatus.CANCELED, JobStatus.PAUSED -> Warn
                     JobStatus.PROCESSING, JobStatus.SAVING -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
@@ -207,15 +321,30 @@ fun JobCard(job: DownloadJob, onCancel: () -> Unit, onRetry: () -> Unit, onRemov
                     Text(job.stage ?: job.status.name.lowercase(), style = MaterialTheme.typography.labelMedium, color = stageColor)
                 }
                 if (job.status == JobStatus.FAILED && job.error != null) {
-                    Text(job.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    val help = explainError(job.error)
+                    Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f), modifier = Modifier.padding(top = 4.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                            if (help != null) {
+                                Text(help.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                                Text(help.hint, style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Text(job.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                            }
+                            help?.fix?.let { fix ->
+                                TextButton(onClick = { onFix(fix) }, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                                    Text(if (fix == ErrorFix.UPDATE_YTDLP) "Update yt-dlp and retry" else "Retry")
+                                }
+                            }
+                        }
+                    }
                 }
                 if (!job.status.isFinished) {
                     Spacer(Modifier.height(6.dp))
                     // Moving bar while there are no byte counts yet (starting, merging, converting).
-                    if (job.status == JobStatus.DOWNLOADING && job.percent > 0f) {
-                        LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth())
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    when {
+                        job.status == JobStatus.PAUSED -> LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth(), color = Warn)
+                        job.status == JobStatus.DOWNLOADING && job.percent > 0f -> LinearProgressIndicator(progress = { job.percent / 100f }, modifier = Modifier.fillMaxWidth())
+                        else -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                 }
                 Spacer(Modifier.height(4.dp))
@@ -236,9 +365,12 @@ fun JobCard(job: DownloadJob, onCancel: () -> Unit, onRetry: () -> Unit, onRemov
             Column(horizontalAlignment = Alignment.End) {
                 when {
                     job.status == JobStatus.COMPLETED && job.outputUri != null -> IconButton(onClick = onPlay) { Icon(Icons.Rounded.PlayArrow, "Play") }
-                    !job.status.isFinished -> IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "Stop") }
-                    else -> IconButton(onClick = onRetry) { Icon(Icons.Rounded.Refresh, "Retry") }
+                    job.status == JobStatus.PAUSED -> IconButton(onClick = onResume) { Icon(Icons.Rounded.PlayArrow, "Resume", tint = MaterialTheme.colorScheme.primary) }
+                    job.status == JobStatus.DOWNLOADING || job.status == JobStatus.QUEUED -> IconButton(onClick = onPause) { Icon(Icons.Rounded.Pause, "Pause") }
+                    job.status.isFinished -> IconButton(onClick = onRetry) { Icon(Icons.Rounded.Refresh, "Retry") }
                 }
+                if (job.status == JobStatus.QUEUED) IconButton(onClick = onPrioritize) { Icon(Icons.Rounded.VerticalAlignTop, "Download next") }
+                if (!job.status.isFinished) IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "Stop") }
                 if (job.status.isFinished) IconButton(onClick = onRemove) { Icon(Icons.Rounded.Delete, "Remove from list") }
             }
         }

@@ -1,33 +1,118 @@
+<div align="center">
+
 # YTD Studio
 
-A lightweight Windows desktop app (Electron + TypeScript + React), plus an [Android app](#android-app)
-with the same features, for four jobs, plus an optional [AI layer](#ai-discover-summaries-and-smart-playlists-ollama) in both apps:
+**Watch YouTube without ads, save anything in one click, and keep it all organized.**
+A Windows desktop app and an Android app, with an optional AI layer that finds videos *for you*.
 
-1. **Stream**: paste a YouTube link and watch it inside the app. No ads, no popups, and seeking works properly.
-2. **Download**: two modes only. The **whole video (with audio)** as MP4, or **audio only** (MP3/M4A/OPUS/WAV/FLAC).
-   **Whole playlists in one click**, each in its own folder in playlist order, optionally **kept in sync**
-   (Sync later downloads only the videos added since). Batch links too, with a live queue.
-3. **Watch**: a player with an up-next queue, autoplay, shuffle, repeat, playback speed and keyboard shortcuts.
-   It **remembers where you stopped** in every video and offers it under *Continue watching*.
-4. **Organize**: a Library with favorites, watched/unwatched, search and sorting, a **Playlists** tab with your
-   downloaded YouTube playlists, and **playlists of your own** (create, rename, reorder, play all, shuffle).
+[Download the latest release](../../releases/latest) · [Features](#features) · [Android](#android-app) · [AI](#ai-discover-summaries-and-smart-playlists-ollama) · [Build from source](#quick-start)
 
-Plus a **Settings** tab for the downloads folder, quality defaults, and the tools behind the scenes.
+<img src="docs/screenshots/home.png" alt="YTD Studio Home: a pasted link with Watch now, one-click video and audio downloads, stats and downloads in progress" width="900">
 
-With an [Ollama](https://ollama.com) model connected (Ollama Cloud with your API key, or a local Ollama):
+</div>
 
-5. **Discover**: your own YouTube algorithm. Describe what you want in plain words; the model plans the
-   searches, the app runs them, and the model ranks every result for *you*, with a reason for each pick.
-   Refine it conversationally, give thumbs up/down, hide channels, or let **For you** work from your library.
-6. **AI insights**: a streamed *TL;DW* summary of any video from its captions, with **clickable key
-   moments** that jump the player there, and a chat to ask questions about the video.
-7. **Smart playlists**: the model sorts your library into themed playlists; you pick which ones to create.
+---
+
+## What's new in 2.0
+
+A complete redesign with a new **Home** screen, a **command palette**, **pause and resume**, **clips**,
+**SponsorBlock**, **subtitles in the player**, **auto-sync for followed channels**, **backup and restore**,
+**accent colors** and a lot of small touches, in both apps. See the [release notes](.github/release-notes/v2.0.0.md).
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Download: quality cards with size estimates, clip range and SponsorBlock](docs/screenshots/download.png) | ![Queue: pause, resume, download next, overall progress](docs/screenshots/queue.png) |
+| **Download**: pick video or audio, see the size of every quality, cut a clip, skip sponsors. | **Queue**: live progress, pause / resume, "download next", Pause all, retry with a reason. |
+| ![Library grid with continue watching](docs/screenshots/library.png) | ![Player with up next, sleep timer and shortcuts](docs/screenshots/player.png) |
+| **Library**: continue watching, favorites, channels, grid or list, multi-select. | **Player**: up next, shuffle, repeat, speed, subtitles, picture-in-picture, sleep timer. |
+| ![Stream with an AI summary and clickable key moments](docs/screenshots/stream.png) | ![Discover: AI-ranked results with reasons](docs/screenshots/discover.png) |
+| **Stream** ad-free, with an AI *TL;DW* whose key moments seek the video. | **Discover**: describe what you want; AI plans the searches and ranks every result for you. |
+| ![Command palette](docs/screenshots/palette.png) | ![Settings with themes and accent colors](docs/screenshots/settings.png) |
+| **Ctrl+K** finds anything, runs any action, or acts on a pasted link. | **Settings**: dark / light / system, six accent colors, everything explained. |
+| ![Playlists](docs/screenshots/playlists.png) | ![Home in the light theme](docs/screenshots/home-light.png) |
+| **Playlists**: downloaded YouTube playlists (followed for new uploads) and your own. | **Light theme** with the Ocean accent. |
+
+**Android**
+
+| | | | |
+| --- | --- | --- | --- |
+| ![Android Home](docs/screenshots/android-home.png) | ![Android link sheet](docs/screenshots/android-link.png) | ![Android downloads](docs/screenshots/android-downloads.png) | ![Android settings](docs/screenshots/android-settings.png) |
+| Home | Paste or share a link | Downloads | Settings |
+
+<sub>Screenshots use generated sample content (see `scripts/screenshots/`), not real YouTube videos.</sub>
+
+## Features
+
+**Get things in**
+
+- **One link bar for everything** (Home): paste a video, a playlist or a channel and get the obvious actions:
+  *Watch now*, *Listen*, *Video* (with its size) or *Audio* in one click, or every option.
+- **Paste anywhere** (Ctrl+V outside a text field), **drop a link** on the window, or let the app **offer a link you
+  just copied** when you come back to it. On Android, **Share** from the YouTube app.
+- **Command palette** (Ctrl+K): jump to any screen, pause or resume everything, retry failures, switch theme or
+  accent, back up, search your library, or paste a link to watch or download it right there.
+
+**Download**
+
+- **Video (with audio)** up to 4K as MP4, or **audio only** as MP3, M4A, OPUS, FLAC or WAV.
+- **Size estimates** for every quality before you start.
+- **Clips**: save only 2:10–14:30 of a video. **SponsorBlock**: cut sponsor, self-promo and "subscribe" segments.
+- **Whole playlists in one click**, in their own folder and in order, and **follow** playlists and channels:
+  Sync fetches only what is new, and **auto-sync** does it on a schedule (every 1 to 24 hours).
+- A **queue** with live speed and ETA, **pause and resume** (continues from the partial file, also after a
+  restart), **download next**, Pause all / Resume all / Retry failed, and a searchable history.
+- **Errors explained**: "YouTube changed something" comes with an *Update yt-dlp and retry* button,
+  age-restricted videos point to browser sign-in, and so on.
+- **Speed limit**, **video codec** choice (compatible H.264 or best quality), embedded **cover art, chapters and
+  tags**, subtitles, thumbnails, metadata, filename template, proxy and browser cookies.
+- Windows **notifications** and **taskbar progress**; on Android a progress notification and background downloads.
+
+**Watch and organize**
+
+- **Stream** ad-free inside the app, with **picture-in-picture**, **theater mode** and **recently streamed**.
+- A **player** with up next, autoplay, shuffle, repeat, speed, **subtitles**, picture-in-picture, a
+  **sleep timer** and YouTube-style shortcuts (press **?** to see them all). It **resumes** where you stopped.
+- A **Library** with *Continue watching*, favorites, watched / unwatched, channel filter, six sort orders,
+  grid or list, and **multi-select** (play, add to a playlist, favorite, mark watched, delete).
+- **Playlists**: downloaded YouTube playlists in order, plus **your own** (create, rename, reorder, shuffle).
+- **Backup and restore**: favorites, progress, playlists, followed channels, AI feedback and settings in one file.
+- **Make it yours**: dark, light or system theme and six accent colors (Crimson, Violet, Ocean, Emerald, Amber, Rose).
+
+**AI (optional, Ollama)**
+
+- **Discover**: your own YouTube algorithm. Describe what you want in plain words; the model plans the searches,
+  the app runs them, and the model ranks every result for *you*, with a reason for each pick.
+- **AI insights**: a streamed *TL;DW* of any video from its captions, with **clickable key moments**, and a chat
+  to ask questions about it.
+- **Smart playlists**: the model sorts your library into themed playlists; you pick which ones to create.
+
+### Keyboard shortcuts (desktop)
+
+| Keys | Does |
+| --- | --- |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Command palette: search, paste a link, run any action |
+| <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste a YouTube link anywhere to open it |
+| <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>7</kbd> | Home, Discover, Stream, Download, Library, Playlists, Settings |
+| <kbd>Space</kbd> / <kbd>K</kbd> | Player: play / pause |
+| <kbd>J</kbd> / <kbd>L</kbd>, <kbd>←</kbd> / <kbd>→</kbd> | Player: back / forward 10 s, 5 s |
+| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>M</kbd> | Player: volume, mute |
+| <kbd>0</kbd> … <kbd>9</kbd> | Player: jump to 0 % … 90 % |
+| <kbd>Shift</kbd>+<kbd>.</kbd> / <kbd>Shift</kbd>+<kbd>,</kbd> | Player: faster / slower |
+| <kbd>C</kbd>, <kbd>I</kbd>, <kbd>F</kbd> | Player: subtitles, picture-in-picture, fullscreen |
+| <kbd>N</kbd> / <kbd>P</kbd>, <kbd>?</kbd> | Player: next / previous, all shortcuts |
 
 ---
 
 ## Download the builds
 
 GitHub Actions builds both apps on every push (`.github/workflows/build.yml`):
+
+The easiest way: open the [latest release](../../releases/latest) and download the Windows installer
+(`YTD-Studio-…-setup.exe`) or the Android APK (`…-arm64-v8a-release.apk` for practically every phone).
+
+Every push is also built by GitHub Actions:
 
 1. Open the repository's **Actions** tab and pick the latest **Build** run.
 2. Under **Artifacts**, download **YTD-Studio-Windows** (the `...-setup.exe` installer) and/or
@@ -166,6 +251,8 @@ src/
     downloads.ts     queue, concurrency, live progress parsing, history persistence
     library.ts       scans the downloads folder and pairs sidecar thumbnails/metadata
     library-state.ts favorites, watch progress, your playlists and synced YouTube playlists (library-state.json)
+    sync.ts          Sync of followed playlists / channels, and the auto-sync schedule
+    backup.ts        backup file export and merge-on-import
     settings.ts      JSON-backed settings store
     ai/
       ollama.ts        Ollama client (streamed chat, structured JSON, models, web search), encrypted API key
@@ -174,17 +261,25 @@ src/
       insights.ts      summaries, questions about a video, smart playlists
       taste.ts         thumbs up/down, hidden channels, recent requests (ai-taste.json)
   preload/         contextBridge API exposed as window.api
-  renderer/        React UI (Discover / Stream / Download / Library / Playlists / Settings, player overlay)
+  renderer/        React UI (Home / Discover / Stream / Download / Library / Playlists / Settings, player
+                   overlay, command palette, copied-link prompt, toasts with actions)
   shared/          types and IPC channel names used by both sides
 scripts/smoke.mjs  end-to-end UI test driven over the Chrome DevTools Protocol
+scripts/e2e/       end-to-end test with a fake yt-dlp, media host and Ollama (runs in CI)
+scripts/screenshots/ the README screenshots, from generated sample content
 ```
 
 ### Download modes
 
 | Mode | With ffmpeg | Without ffmpeg |
 | --- | --- | --- |
-| Video (with audio) | Best video up to your chosen resolution (H.264 preferred) plus best audio, merged into MP4 | Best single-file format with both video and audio |
+| Video (with audio) | Best video up to your chosen resolution (H.264 preferred, or any codec with "Best quality") plus best audio, merged into MP4 | Best single-file format with both video and audio |
 | Audio only | Converted to MP3 / M4A / OPUS / WAV / FLAC | Saved as M4A, unconverted |
+| Clips, SponsorBlock, embedded cover art and chapters | Supported (`--download-sections`, `--sponsorblock-remove`, `--embed-*`) | Not available |
+
+**Pause and resume**: pausing stops yt-dlp but keeps its partial file, and Resume runs it again with the same
+options, so it continues where it stopped (`.part` files). Downloads that were running when the app closed come
+back as *paused*. The options each job was queued with are stored with it, so Retry and Resume use them too.
 
 ### Streaming
 
@@ -244,6 +339,10 @@ node scripts/smoke.mjs
 | AI: "model ... is not available" | The model was removed or renamed. Settings > AI > **Refresh list** and pick another. |
 | AI summary says there is no transcript | The video has no captions; the summary is based on the description and chapters only. |
 | Discover results feel generic | Turn on **Personalize**, give a few thumbs up/down, or use a bigger model. |
+| A download says "YouTube changed something" | Click **Update yt-dlp and retry** on the failed download. |
+| A clip or SponsorBlock option is greyed out | Both need ffmpeg: click **Install ffmpeg**. |
+| I paused a download and closed the app | It is still there as *paused*; **Resume** continues from the partial file. |
+| The copied-link prompt gets in the way | Settings > General > **Offer copied YouTube links** turns it off. |
 
 Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg live in `%APPDATA%/YTD Studio/bin`.
 
@@ -257,15 +356,16 @@ watch and organize everything offline.
 
 | Tab | What it does |
 | --- | --- |
-| Home | One link bar: paste (or share) a video or playlist and a sheet offers **Watch now**, **Listen** (audio only) or **Download** (a whole playlist in one tap, optionally kept in sync). Below: *Continue watching*, *Recently added*, your playlists and favorites. |
-| Library | Videos (grid or list), Music, Playlists and Favorites tabs, with search, sorting, play all and shuffle. Every item has favorite, add to playlist, mark (un)watched, share, open with and delete. Playlists: downloaded YouTube playlists (in order, with Sync) and your own (create, rename, reorder, remove). |
-| Downloads | Live queue with progress and stages ("Downloading video", "Merging video and audio", "Saving..."), history and retry, and your synced playlists with **Sync** / **Sync all**. Downloads keep running in the background with a progress notification. |
+| Home | A greeting and one link bar: paste (or share) a video or playlist and a sheet offers **Watch now**, **Listen** (audio only) or **Download** with the size of every quality, an optional **clip** range and **SponsorBlock** (a whole playlist in one tap, optionally kept in sync). A chip offers a copied link. Below: stats, *Continue watching*, *Recently added*, *Recently streamed*, your playlists and favorites. |
+| Library | Videos (grid or list), Music, Playlists and Favorites tabs, with search, sorting, play all and shuffle. **Long-press to select several** and play, add to a playlist, favorite, mark watched or delete them together. Every item has favorite, add to playlist, mark (un)watched, share, open with and delete. Playlists: downloaded YouTube playlists (in order, with Sync) and your own (create, rename, reorder, remove). |
+| Downloads | Live queue with overall progress, stages ("Downloading video", "Merging video and audio", "Saving..."), **pause / resume**, **download next**, Pause all / Resume all, a searchable history with **Retry failed**, explained errors with an *Update yt-dlp and retry* button, and your followed playlists and channels with **Sync** / **Sync all**. Downloads keep running in the background with a progress notification. |
 | Discover | The [AI Discover](#discover-your-own-recommendation-algorithm) feed: describe what you want (or tap **For you**), get ranked videos with reasons, refine, thumbs up/down, hide channels, then Play, Summary or Download. |
-| Settings | **AI (Ollama)**: server, API key, model, test. Theme (system / light / dark, Material You colors), playback (resume, picture-in-picture, background play for videos), download defaults, playlist folders, yt-dlp version and updates. |
+| Settings | **AI (Ollama)**: server, API key, model, test. Theme (system / light / dark), **six accent colors** or Material You colors, playback (resume, picture-in-picture, background play for videos), download defaults (quality, codec, audio format, speed limit, SponsorBlock, embedded tags and chapters), playlist folders, **auto-sync** when the app opens, **backup and restore**, yt-dlp version and updates. |
 
 The player runs as a media session: music keeps playing in the background with lock-screen and
 notification controls, videos shrink to **picture-in-picture** when you leave, and the queue has
-next/previous, shuffle, repeat and playback speed. It resumes every file where you left off.
+next/previous, shuffle, repeat, playback speed and a **sleep timer** (15 to 90 minutes, or the end of the current
+item). It resumes every file where you left off.
 
 Files are saved through Android's MediaStore into **Movies/YTD Studio** (video) and
 **Music/YTD Studio** (audio), playlists in a subfolder each, so they show up in Gallery and music
@@ -369,12 +469,21 @@ android/app/src/main/java/com/ytdstudio/android/
 
 ## Desktop end-to-end test (no YouTube needed)
 
-`pnpm build && pnpm test:e2e` (Linux: wrap it in `xvfb-run -a`) launches the real app with a
+`pnpm build && pnpm test:e2e` (Linux: wrap it in `xvfb-run -a`; Windows works too, a tiny launcher for the
+fake yt-dlp is compiled with the C# compiler that ships with Windows) launches the real app with a
 stand-in yt-dlp (`scripts/e2e/fake-ytdlp`) and a fake media host, and checks the queue, live
 progress and stages, history, library grouping, in-app streaming, whole-playlist downloads into a
 folder and Sync, favorites, your own playlists and resume. A fake Ollama server covers the AI features:
 key handling, model pick, Discover's plan/search/filter/rank and feedback, streamed summaries with seeking
-key moments, questions, and smart playlists. CI runs it on every push.
+key moments, questions, and smart playlists. It also covers Home's one-click downloads, pause and resume,
+the command palette, the copied-link prompt, clips with SponsorBlock, and subtitles served as WebVTT.
+CI runs it on every push. The app runs against a throwaway data folder (`YTD_USER_DATA`), never yours.
+
+## Screenshots
+
+`pnpm build && node scripts/screenshots/capture.mjs` regenerates `docs/screenshots/` with the same fakes and
+generated sample content (gradient thumbnails and a sample video made with ffmpeg's `gradients` and
+`drawtext`). Needs python3 and ffmpeg.
 Needs `python3` and `ffmpeg`.
 
 ---

@@ -123,6 +123,37 @@ class LibraryStateStore {
     })
   }
 
+  /**
+   * Merge a backup in: favorites are combined, the newer progress wins per item, playlists and
+   * synced playlists are added (same id: the incoming one gains any items it is missing).
+   */
+  merge(incoming: Partial<LibraryState>): LibraryState {
+    const favorites = Array.from(new Set([...this.data.favorites, ...(Array.isArray(incoming.favorites) ? incoming.favorites.filter((k) => typeof k === 'string') : [])]))
+    const progress = { ...this.data.progress }
+    if (incoming.progress && typeof incoming.progress === 'object') {
+      Object.entries(incoming.progress).forEach(([key, value]) => {
+        if (!value || typeof value.position !== 'number') return
+        const current = progress[key]
+        if (!current || (value.updatedAt ?? 0) > current.updatedAt) progress[key] = value
+      })
+    }
+    const playlists = this.data.playlists.slice()
+    ;(Array.isArray(incoming.playlists) ? incoming.playlists : []).forEach((p) => {
+      if (!p || typeof p.id !== 'string' || !Array.isArray(p.items)) return
+      const index = playlists.findIndex((x) => x.id === p.id)
+      if (index < 0) playlists.push({ id: p.id, name: String(p.name || 'Playlist'), items: p.items.filter((k) => typeof k === 'string'), createdAt: p.createdAt || Date.now() })
+      else playlists[index] = { ...playlists[index], items: Array.from(new Set([...playlists[index].items, ...p.items])) }
+    })
+    const saved = this.data.saved.slice()
+    ;(Array.isArray(incoming.saved) ? incoming.saved : []).forEach((p) => {
+      if (!p || typeof p.id !== 'string' || typeof p.url !== 'string') return
+      const index = saved.findIndex((x) => x.id === p.id)
+      if (index < 0) saved.push({ ...p, knownIds: Array.isArray(p.knownIds) ? p.knownIds : [] })
+      else saved[index] = { ...saved[index], knownIds: Array.from(new Set([...saved[index].knownIds, ...(p.knownIds ?? [])])) }
+    })
+    return this.commit({ favorites, progress, playlists, saved })
+  }
+
   /** A file went to the trash: drop it everywhere. */
   forget(key: string): LibraryState {
     const progress = { ...this.data.progress }

@@ -7,7 +7,11 @@ import type { JobStatus, LibraryItem, WatchProgress } from '@shared/types'
 export function ProgressBar({ value, status }: { value: number; status?: JobStatus }): ReactNode {
   // No byte counts yet (starting up, waiting in line) or post-processing: show motion instead of a frozen bar.
   const busy = status === 'processing' || status === 'queued' || (status === 'downloading' && value <= 0)
-  const cls = status === 'completed' ? 'progress done' : status === 'error' || status === 'canceled' ? 'progress failed' : busy ? 'progress busy' : 'progress'
+  const cls =
+    status === 'completed' ? 'progress done'
+      : status === 'error' || status === 'canceled' ? 'progress failed'
+        : status === 'paused' ? 'progress paused'
+          : busy ? 'progress busy' : 'progress'
   return (
     <div className={cls}>
       <span style={{ width: clampPercent(value) + '%' }} />
@@ -28,11 +32,57 @@ export function EmptyState({
 }): ReactNode {
   return (
     <div className="empty">
-      {icon}
+      <div className="empty-icon">{icon}</div>
       <h3>{title}</h3>
       <p>{message}</p>
       {children ? <div className="row tight" style={{ justifyContent: 'center', marginTop: 6 }}>{children}</div> : null}
     </div>
+  )
+}
+
+/** A labelled toggle switch (a styled checkbox). */
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled,
+  title,
+}: {
+  checked: boolean
+  onChange: (value: boolean) => void
+  label?: ReactNode
+  disabled?: boolean
+  title?: string
+}): ReactNode {
+  return (
+    <label className={'switch' + (disabled ? ' disabled' : '')} title={title}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+      <span className="track" />
+      {label !== undefined ? <span>{label}</span> : null}
+    </label>
+  )
+}
+
+/** One row of a settings-style list: title and explanation on the left, the control on the right. */
+export function OptionRow({ title, hint, children }: { title: ReactNode; hint?: ReactNode; children: ReactNode }): ReactNode {
+  return (
+    <div className="option-row">
+      <div className="option-text">
+        <div className="option-title">{title}</div>
+        {hint ? <div className="option-hint">{hint}</div> : null}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+export function Kbd({ keys }: { keys: string }): ReactNode {
+  return (
+    <>
+      {keys.split('+').map((k) => (
+        <kbd key={k}>{k}</kbd>
+      ))}
+    </>
   )
 }
 

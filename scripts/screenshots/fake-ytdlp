@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Stand-in for yt-dlp used to take README screenshots: a small fictional catalog, no network."""
+import json, os, shutil, sys, time
+args = sys.argv[1:]
+here = os.path.dirname(os.path.abspath(__file__))
+CATALOG = json.load(open(os.path.join(here, 'catalog.json'), encoding='utf-8'))
+BY_ID = {v['id']: v for v in CATALOG['videos']}
+if args == ['--version']:
+    print('2026.10.01'); sys.exit(0)
+BASE = os.environ.get('FAKE_MEDIA_BASE', 'http://127.0.0.1:18080')
+HDR = {'User-Agent': 'FakeClient/1.0', 'X-Client-Check': 'visionos'}
+STEP = float(os.environ.get('FAKE_STEP', '0.25'))
+
+
+def opt(name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+def thumb(vid):
+    return 'https://i.ytimg.com/vi/%s/hqdefault.jpg' % vid
+
+
+def formats(duration):
+    out = []
+    for h, kbps in [(2160, 16000), (1440, 9000), (1080, 4500), (720, 2500), (480, 1100), (360, 600)]:
+        out.append({'format_id': 'v%d' % h, 'ext': 'mp4', 'protocol': 'https', 'height': h, 'fps': 30, 'vcodec': 'avc1.640028',
+                    'acodec': 'none', 'url': BASE + '/video.mp4', 'http_headers': HDR, 'tbr': kbps,
+                    'filesize': int(kbps * 1000 * duration / 8)})
+    out.append({'format_id': '140', 'ext': 'm4a', 'protocol': 'https', 'height': None, 'vcodec': 'none', 'acodec': 'mp4a.40.2',
+                'url': BASE + '/audio.m4a', 'http_headers': HDR, 'tbr': 129, 'abr': 129, 'filesize': int(129000 * duration / 8)})
+    out.append({'format_id': '18', 'ext': 'mp4', 'protocol': 'https', 'height': 360, 'vcodec': 'avc1.42001E', 'acodec': 'mp4a.40.2',
+                'url': BASE + '/muxed.mp4', 'http_headers': HDR, 'tbr': 700})
+    return out
+
+
+def info(vid):
+    v = BY_ID.get(vid) or CATALOG['videos'][0]
+    return {'id': v['id'], 'title': v['title'], 'uploader': v['channel'], 'channel': v['channel'], 'duration': v['duration'],
+            'view_count': v.get('views', 120000), 'thumbnail': thumb(v['id']), 'webpage_url': 'https://www.youtube.com/watch?v=' + v['id'],
+            'formats': formats(v['duration']), 'extractor_key': 'Youtube', 'language': 'en', 'description': v['title'],
+            'automatic_captions': {'en-orig': [{'ext': 'vtt', 'url': BASE + '/captions.vtt'}]},
+            'subtitles': {'en': [{'ext': 'vtt'}], 'es': [{'ext': 'vtt'}]}}
+
+
+url = args[-1]
+vid = url.split('v=')[-1].split('&')[0] if 'v=' in url else url.rstrip('/').split('/')[-1]
+
+if '-J' in args and 'results?search_query=' in url:
+    entries = [{'id': v['id'], 'url': 'https://www.youtube.com/watch?v=' + v['id'], 'title': v['title'], 'channel': v['channel'],
+                'duration': v['duration'], 'view_count': v.get('views', 50000), 'description': v['title']}
+               for v in CATALOG['videos'] if v.get('discover')]
+    print(json.dumps({'_type': 'playlist', 'id': 'search', 'title': 'search', 'entries': entries, 'extractor_key': 'YoutubeSearchURL'})); sys.exit(0)
+if '--skip-download' in args and ('--write-auto-subs' in args or '--write-subs' in args):
+    with open(os.path.join(opt('-P'), 'captions.%s.vtt' % opt('--sub-langs')), 'w', encoding='utf-8') as f:
+        f.write(CATALOG['captions'])
+    sys.exit(0)
+if '-J' in args and 'list=' in url:
+    pl = CATALOG['playlist']
+    entries = [{'id': i, 'title': BY_ID[i]['title'], 'url': 'https://www.youtube.com/watch?v=' + i, 'duration': BY_ID[i]['duration'],
+                'thumbnails': [{'url': thumb(i)}], 'uploader': BY_ID[i]['channel']} for i in pl['ids']]
+    print(json.dumps({'_type': 'playlist', 'id': pl['id'], 'title': pl['title'], 'uploader': pl['channel'], 'entries': entries,
+                      'extractor_key': 'YoutubeTab'})); sys.exit(0)
+if '-J' in args:
+    print(json.dumps(info(vid))); sys.exit(0)
+if '-j' in args:
+    sel = opt('-f')
+    out = info(vid)
+    picked = [f for i in sel.split('+') for f in out['formats'] if f['format_id'] == i]
+    if len(picked) > 1: out['requested_formats'] = picked
+    elif picked: out.update(picked[0])
+    print(json.dumps(out)); sys.exit(0)
+
+# Download: slow, steady progress so screenshots catch it mid-way.
+out_dir = opt('-P'); pathfile = None
+if '--print-to-file' in args:
+    i = args.index('--print-to-file'); pathfile = args[i + 2]
+v = BY_ID.get(vid) or CATALOG['videos'][0]
+name = (opt('-o') or '%(title)s [%(id)s].%(ext)s').replace('%(title)s', v['title'].replace('/', '-')).replace('%(id)s', v['id']).replace('%%', '%')
+stem = os.path.join(out_dir, name.replace('.%(ext)s', ''))
+os.makedirs(os.path.dirname(stem), exist_ok=True)
+audio_only = '-x' in args
+def say(s): print(s, flush=True)
+say('[youtube] Extracting URL: https://www.youtube.com/watch?v=' + v['id'])
+say('[youtube] %s: Downloading webpage' % v['id']); time.sleep(STEP * 2)
+say('[info] %s: Downloading 1 format(s): ' % v['id'] + ('140' if audio_only else 'v1080+140'))
+parts = [('.f140.m4a', 'audio.m4a', 3200000)] if audio_only else [('.f1080.mp4', 'video.mp4', 48000000), ('.f140.m4a', 'audio.m4a', 3200000)]
+for suffix, src, total in parts:
+    say('[download] Destination: ' + stem + suffix)
+    for step in range(1, 41):
+        say('@@P %d %d NA %d %d' % (total * step // 40, total, 2600000 + step * 31000, (40 - step) * 2))
+        time.sleep(STEP)
+    shutil.copy(os.path.join(here, 'media', src), stem + suffix)
+final = stem + ('.mp3' if audio_only else '.mp4')
+if audio_only:
+    say('[ExtractAudio] Destination: ' + final); time.sleep(STEP * 3)
+    os.replace(stem + '.f140.m4a', final)
+else:
+    say('[Merger] Merging formats into "%s"' % final); time.sleep(STEP * 4)
+    shutil.copy(os.path.join(here, 'media', 'muxed.mp4'), final)
+    for suffix, _, _ in parts: os.remove(stem + suffix)
+if pathfile:
+    with open(pathfile, 'a', encoding='utf-8') as f: f.write(final + '\n')

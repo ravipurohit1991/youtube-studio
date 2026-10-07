@@ -1,12 +1,15 @@
 package com.ytdstudio.android.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ytdstudio.android.BuildConfig
 import com.ytdstudio.android.YtdApp
+import com.ytdstudio.android.ai.Ai
 import com.ytdstudio.android.ai.DiscoverVideo
 import com.ytdstudio.android.data.DownloadMode
 import com.ytdstudio.android.data.DownloadRequest
@@ -14,12 +17,15 @@ import com.ytdstudio.android.data.LibraryItem
 import com.ytdstudio.android.data.MediaLibrary
 import com.ytdstudio.android.data.PlaylistEntry
 import com.ytdstudio.android.data.SavedPlaylist
+import com.ytdstudio.android.data.StreamEntry
 import com.ytdstudio.android.data.VideoMeta
+import com.ytdstudio.android.data.parseClock
 import com.ytdstudio.android.engine.Engine
 import com.ytdstudio.android.service.DownloadService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 enum class Tab { HOME, DISCOVER, LIBRARY, DOWNLOADS, SETTINGS }
 
@@ -50,6 +56,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var selected by mutableStateOf(setOf<String>())
     var keepSynced by mutableStateOf(true)
     var resolvingStream by mutableStateOf<String?>(null)
+    /** Only part of a single video ("1:23" style), and cutting sponsors, for the next download. */
+    var clipFrom by mutableStateOf("")
+    var clipTo by mutableStateOf("")
+    var sponsorBlock by mutableStateOf(prefs.settings.value.sponsorBlock)
 
     // Library
     var items by mutableStateOf(emptyList<LibraryItem>())
@@ -61,6 +71,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var pendingDelete by mutableStateOf<LibraryItem?>(null)
     var addToPlaylist by mutableStateOf<List<String>?>(null)
     var syncing by mutableStateOf(setOf<String>())
+    /** Library items picked for a bulk action (long-press to start). */
+    var librarySelection by mutableStateOf(setOf<String>())
+    var pendingBulkDelete by mutableStateOf<List<LibraryItem>?>(null)
+    private var lastAutoSync = 0L
 
     fun analyze(target: String = url) {
         val link = target.trim()
@@ -77,6 +91,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         mode = defaults.defaultMode
         height = defaults.preferredHeight
         audioFormat = defaults.audioFormat
+        sponsorBlock = defaults.sponsorBlock
+        clipFrom = ""
+        clipTo = ""
         viewModelScope.launch {
             try {
                 val result = Engine.probe(link)
@@ -103,8 +120,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         analyze(link)
     }
 
+    /** The clip range typed in the sheet: (start, end), null = whole video, or an error message. */
+    fun clipRange(): Pair<Pair<Double?, Double?>?, String?> {
+        val from = clipFrom.trim()
+        val to = clipTo.trim()
+        if (from.isEmpty() && to.isEmpty()) return null to null
+        val start = if (from.isEmpty()) null else parseClock(from) ?: return null to "Use a time like 1:23 or 83."
+        val end = if (to.isEmpty()) null else parseClock(to) ?: return null to "Use a time like 1:23 or 83."
+        if (start != null && end != null && end <= start) return null to "The end must come after the start."
+        return (start to end) to null
+    }
+
     fun download() {
         val m = meta ?: return
+        val (clip, clipError) = if (m.isPlaylist) null to null else clipRange()
+        if (clipError != null) {
+            message = clipError
+            return
+        }
         val requests = if (m.isPlaylist) {
             val folder = if (prefs.settings.value.playlistFolders) MediaLibrary.safeFolder(m.title) else null
             val picked = m.entries.withIndex().filter { it.value.id in selected }
@@ -118,9 +151,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     ),
                 )
             }
-            picked.map { (i, e) -> request(e, folder, i + 1, mode, height, audioFormat) }
+            picked.map { (i, e) -> request(e, folder, i + 1, mode, height, audioFormat).copy(sponsorBlock = sponsorBlock) }
         } else {
-            listOf(DownloadRequest(m.url, mode, height, audioFormat, m.title, m.uploader, m.thumbnail, m.duration, videoId = m.id))
+            listOf(
+                DownloadRequest(
+                    m.url, mode, height, audioFormat, m.title, m.uploader, m.thumbnail, m.duration, videoId = m.id,
+                    clipStart = clip?.first, clipEnd = clip?.second, sponsorBlock = sponsorBlock,
+                ),
+            )
         }
         if (requests.isEmpty()) {
             message = "Pick at least one video."
@@ -145,7 +183,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val source = Engine.resolveStream(link, streamHeight, audioOnly)
-                onReady(if (title != null && source.title == link) source.copy(title = title) else source, thumbnail)
+                val named = if (title != null && source.title == link) source.copy(title = title) else source
+                val id = youTubeId(source.pageUrl ?: link)
+                prefs.rememberStream(
+                    StreamEntry(source.pageUrl ?: link, id, named.title, named.uploader, thumbnail ?: id?.let { "https://i.ytimg.com/vi/$it/mqdefault.jpg" }, System.currentTimeMillis()),
+                )
+                onReady(named, thumbnail)
             } catch (e: Exception) {
                 message = e.message ?: "Could not start playback."
             } finally {
@@ -158,12 +201,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun queueDiscover(videos: List<DiscoverVideo>, mode: DownloadMode) {
         if (videos.isEmpty()) return
         val s = prefs.settings.value
-        store.addAll(videos.map { v -> DownloadRequest(v.url, mode, s.preferredHeight, s.audioFormat, v.title, v.channel, v.thumbnail, v.duration, videoId = v.id) })
+        store.addAll(videos.map { v -> DownloadRequest(v.url, mode, s.preferredHeight, s.audioFormat, v.title, v.channel, v.thumbnail, v.duration, videoId = v.id, sponsorBlock = s.sponsorBlock) })
         DownloadService.kick(getApplication())
         message = if (videos.size == 1) "Download started." else "${videos.size} downloads queued."
     }
 
     fun cancel(id: String) = DownloadService.cancel(getApplication(), id)
+
+    fun pause(id: String) {
+        val job = store.get(id) ?: return
+        if (job.status.isActive) DownloadService.pause(getApplication(), id) else store.pause(id)
+    }
+
+    fun resume(id: String) {
+        store.resume(id)
+        DownloadService.kick(getApplication())
+    }
+
+    fun prioritize(id: String) {
+        store.prioritize(id)
+        DownloadService.kick(getApplication())
+    }
+
+    fun pauseAll() = DownloadService.pauseAll(getApplication())
+
+    fun resumeAll() {
+        val n = store.resumeAll()
+        if (n > 0) DownloadService.kick(getApplication())
+        message = if (n > 0) "$n download(s) resumed." else "Nothing is paused."
+    }
+
+    fun retryFailed() {
+        val n = store.retryFailed()
+        if (n > 0) DownloadService.kick(getApplication())
+        message = if (n > 0) "$n download(s) retried." else "No failed downloads."
+    }
+
+    fun updateYtdlpAndRetry(id: String) {
+        Engine.updateYtdlp()
+        viewModelScope.launch {
+            Engine.awaitReady()
+            retry(id)
+        }
+    }
 
     fun retry(id: String) {
         store.retry(id)
@@ -210,6 +290,89 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun syncAll() = library.state.value.saved.forEach { sync(it) }
+
+    /** Auto-sync (Settings): when the app opens, sync followed playlists whose last sync is too old. */
+    fun autoSyncIfDue() {
+        val hours = prefs.settings.value.autoSyncHours
+        val now = System.currentTimeMillis()
+        if (hours <= 0 || now - lastAutoSync < 10 * 60 * 1000) return
+        lastAutoSync = now
+        viewModelScope.launch {
+            Engine.awaitReady()
+            library.state.value.saved.filter { now - it.lastSync >= hours * 3600_000L }.forEach { sync(it) }
+        }
+    }
+
+    // ---------- library selection ----------
+
+    fun toggleSelected(key: String) {
+        librarySelection = if (key in librarySelection) librarySelection - key else librarySelection + key
+    }
+
+    fun clearSelection() {
+        librarySelection = emptySet()
+    }
+
+    fun selectedItems(): List<LibraryItem> = items.filter { it.key in librarySelection }
+
+    fun favoriteSelected() {
+        val picked = selectedItems()
+        val missing = picked.filter { it.key !in library.state.value.favorites }
+        (missing.ifEmpty { picked }).forEach { library.toggleFavorite(it.key) }
+        message = if (missing.isNotEmpty()) "${missing.size} added to favorites." else "Removed from favorites."
+        clearSelection()
+    }
+
+    fun markSelectedWatched() {
+        val picked = selectedItems()
+        val mark = picked.any { library.progressOf(it.key)?.watched != true }
+        picked.forEach { library.setWatched(it.key, mark) }
+        message = "${picked.size} marked as " + if (mark) "watched." else "unwatched."
+        clearSelection()
+    }
+
+    // ---------- backup ----------
+
+    /** Favorites, progress, playlists, followed playlists, AI feedback and settings, as one JSON file. */
+    fun exportBackup(uri: Uri) {
+        viewModelScope.launch {
+            message = try {
+                val json = JSONObject()
+                    .put("app", "ytd-studio-android")
+                    .put("version", BuildConfig.VERSION_NAME)
+                    .put("exportedAt", System.currentTimeMillis())
+                    .put("settings", prefs.exportJson())
+                    .put("library", library.exportJson())
+                    .put("taste", Ai.taste.exportJson())
+                withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openOutputStream(uri, "wt")!!.use { it.write(json.toString(2).toByteArray()) }
+                }
+                val s = library.state.value
+                "Backup saved: ${s.favorites.size} favorites, ${s.playlists.size} playlists, ${s.saved.size} followed."
+            } catch (e: Exception) {
+                "Could not save the backup: " + (e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /** Restore a backup made on this or another phone; it is merged into what is here. */
+    fun importBackup(uri: Uri) {
+        viewModelScope.launch {
+            message = try {
+                val text = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+                }
+                val json = JSONObject(text)
+                if (json.optString("app") != "ytd-studio-android") throw IllegalArgumentException("That is not a YTD Studio for Android backup.")
+                json.optJSONObject("settings")?.let { prefs.importJson(it) }
+                json.optJSONObject("taste")?.let { Ai.taste.merge(it) }
+                val s = json.optJSONObject("library")?.let { library.merge(it) } ?: library.state.value
+                "Backup restored: ${s.favorites.size} favorites, ${s.playlists.size} playlists, ${s.saved.size} followed."
+            } catch (e: Exception) {
+                e.message ?: "Could not read that backup."
+            }
+        }
+    }
 
     /** Items of a playlist, in play order. */
     fun playlistItems(ref: PlaylistRef): List<LibraryItem> = when (ref) {

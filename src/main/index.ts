@@ -1,7 +1,7 @@
-import { app, BrowserWindow, Menu, shell } from 'electron'
+import { app, BrowserWindow, Menu, Notification, shell } from 'electron'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
-import type { UpdateStatus } from '@shared/types'
+import type { DownloadJob, UpdateStatus } from '@shared/types'
 import { registerBroadcaster } from './bus'
 import { downloads } from './downloads'
 import { ffmpegStatus, installFfmpeg } from './ffmpeg'
@@ -9,11 +9,15 @@ import { registerIpc } from './ipc'
 import { initLogger, log, logError } from './logger'
 import { libraryState } from './library-state'
 import { startMediaServer, stopMediaServer } from './media-server'
+import { startAutoSync } from './sync'
 import { settings } from './settings'
 import { installYtdlp, resolveYtdlp } from './ytdlp'
 
 const MEDIA_PORT = 47821
 let mainWindow: BrowserWindow | null = null
+
+// Tests and screenshots run against a throwaway data folder (Windows ignores APPDATA for this).
+if (process.env.YTD_USER_DATA) app.setPath('userData', process.env.YTD_USER_DATA)
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -23,7 +27,7 @@ function createWindow(): void {
     minHeight: 660,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#0d1017',
+    backgroundColor: '#0b0d12',
     title: 'YTD Studio',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -67,6 +71,39 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+}
+
+let lastBar = -2
+
+/** Mirror the queue on the taskbar button: a progress bar while downloading, paused (yellow) when stopped. */
+function updateTaskbar(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const { fraction, active, paused } = downloads.summary()
+  const value = fraction === null ? -1 : Math.round(fraction * 100) / 100
+  if (value === lastBar) return
+  lastBar = value
+  if (value < 0 && paused > 0) mainWindow.setProgressBar(1, { mode: 'paused' })
+  else mainWindow.setProgressBar(value, { mode: active ? 'normal' : 'none' })
+}
+
+/** Windows notification for a finished or failed download, only when the app is not in front. */
+function notifyFinished(job: DownloadJob): void {
+  if (!settings.get('notifyOnComplete') || !Notification.isSupported()) return
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) return
+  const ok = job.status === 'completed'
+  const note = new Notification({
+    title: ok ? 'Download finished' : 'Download failed',
+    body: job.title + (ok ? '' : '\n' + (job.error ?? '').slice(0, 140)),
+    silent: !ok,
+  })
+  note.on('click', function () {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    if (ok && job.outputPath) shell.showItemInFolder(job.outputPath)
+  })
+  note.show()
 }
 
 function reportUpdate(status: UpdateStatus): void {
@@ -118,6 +155,18 @@ async function bootstrap(): Promise<void> {
   settings.load()
   downloads.init()
   libraryState.load()
+  if (process.platform === 'win32') app.setAppUserModelId('com.ytdstudio.desktop')
+  let taskbarTimer: NodeJS.Timeout | null = null
+  downloads.setEvents({
+    onChange: function () {
+      if (taskbarTimer) return
+      taskbarTimer = setTimeout(function () {
+        taskbarTimer = null
+        updateTaskbar()
+      }, 400)
+    },
+    onFinish: notifyFinished,
+  })
   registerBroadcaster(function () {
     return BrowserWindow.getAllWindows().map(function (win) { return win.webContents })
   })
@@ -126,6 +175,7 @@ async function bootstrap(): Promise<void> {
   registerIpc()
   Menu.setApplicationMenu(null)
   createWindow()
+  startAutoSync()
   setTimeout(function () {
     ensureYtdlp()
       .then(ensureFfmpeg)

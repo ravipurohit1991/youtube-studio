@@ -137,25 +137,69 @@ export function findOutputFile(dir: string, videoId: string | null, since: numbe
 
 export interface QueueRequest extends DownloadRequest {}
 
+/** "1:05" / "1:02:03" for clip labels. */
+function clock(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const pad = function (n: number) { return n < 10 ? '0' + n : String(n) }
+  return h > 0 ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s)
+}
+
+/** yt-dlp --download-sections value for a clip, or null for the whole video. */
+export function clipSection(start: number | null | undefined, end: number | null | undefined): string | null {
+  const from = typeof start === 'number' && start > 0 ? start : null
+  const to = typeof end === 'number' && end > 0 ? end : null
+  if (from === null && to === null) return null
+  if (from !== null && to !== null && to <= from) return null
+  return '*' + (from !== null ? from : 0) + '-' + (to !== null ? to : 'inf')
+}
+
+function isActive(job: DownloadJob): boolean {
+  return job.status === 'downloading' || job.status === 'processing'
+}
+
+function isPending(job: DownloadJob): boolean {
+  return isActive(job) || job.status === 'queued'
+}
+
+export interface DownloadEvents {
+  /** Any job changed (progress included); throttled by the caller if needed. */
+  onChange?: (jobs: DownloadJob[]) => void
+  /** A job completed or failed. */
+  onFinish?: (job: DownloadJob) => void
+}
+
 class DownloadManager {
   private jobs = new Map<string, DownloadJob>()
   private requests = new Map<string, DownloadRequest>()
   private children = new Map<string, ChildProcess>()
+  /** Why a running job was stopped, so its exit is not reported as a failure. */
+  private stopping = new Map<string, 'cancel' | 'pause'>()
   private saveTimer: NodeJS.Timeout | null = null
+  private events: DownloadEvents = {}
 
   init(): void {
     const stored = readJobsFile()
     stored.slice(0, MAX_HISTORY).forEach((job) => {
       if (job.status === 'downloading' || job.status === 'processing' || job.status === 'queued') {
-        job.status = 'error'
-        job.error = 'Interrupted when the app closed'
-        job.finishedAt = job.finishedAt ?? nowMs()
+        // yt-dlp continues from the partial file, so an interrupted download can simply be resumed.
+        job.status = 'paused'
+        job.stage = 'Paused when the app closed'
+        job.speed = null
+        job.eta = null
       }
       job.folder = job.folder ?? null
       job.playlistIndex = job.playlistIndex ?? null
+      if (job.request) this.requests.set(job.id, job.request)
       this.jobs.set(job.id, job)
     })
     log('downloads: restored', this.jobs.size, 'history entries')
+  }
+
+  setEvents(events: DownloadEvents): void {
+    this.events = events
   }
 
   list(): DownloadJob[] {
@@ -196,6 +240,7 @@ class DownloadManager {
       createdAt: this.nextCreatedAt(),
       startedAt: null,
       finishedAt: null,
+      request: req,
     }
     this.jobs.set(job.id, job)
     this.requests.set(job.id, req)
@@ -218,16 +263,106 @@ class DownloadManager {
   }
 
   private describeQuality(req: DownloadRequest): string {
-    if (req.mode === 'audio_only') return ffmpegLocation() ? (req.audioFormat ?? settings.get('audioFormat')) + ' audio' : 'audio'
-    const height = req.height ?? settings.get('preferredHeight')
-    return height && height > 0 ? 'video + audio · up to ' + height + 'p' : 'video + audio · best'
+    const parts: string[] = []
+    if (req.mode === 'audio_only') {
+      parts.push(ffmpegLocation() ? (req.audioFormat ?? settings.get('audioFormat')) + ' audio' : 'audio')
+    } else {
+      const height = req.height ?? settings.get('preferredHeight')
+      parts.push(height && height > 0 ? 'video + audio · up to ' + height + 'p' : 'video + audio · best')
+    }
+    if (clipSection(req.clipStart, req.clipEnd)) {
+      parts.push('clip ' + clock(req.clipStart ?? 0) + '–' + (req.clipEnd ? clock(req.clipEnd) : 'end'))
+    }
+    if (req.sponsorBlock && ffmpegLocation()) parts.push('no sponsors')
+    return parts.join(' · ')
+  }
+
+  /** Stop a download but keep its partial file, so Resume continues where it stopped. */
+  pause(id: string): void {
+    const job = this.jobs.get(id)
+    if (!job) return
+    if (job.status === 'queued') {
+      this.setPaused(job)
+      return
+    }
+    if (job.status !== 'downloading') return
+    if (!this.children.get(id)) {
+      this.setPaused(job)
+      return
+    }
+    this.stop(job, 'pause')
+  }
+
+  resume(id: string): void {
+    const job = this.jobs.get(id)
+    if (!job || job.status !== 'paused') return
+    job.status = 'queued'
+    job.stage = 'Waiting in queue'
+    job.error = null
+    this.persist()
+    this.emit(job)
+    this.pump()
+  }
+
+  /** Put a waiting job at the front of the queue. */
+  prioritize(id: string): void {
+    const job = this.jobs.get(id)
+    if (!job || (job.status !== 'queued' && job.status !== 'paused')) return
+    const waiting = Array.from(this.jobs.values()).filter(function (j) { return j.status === 'queued' })
+    const first = waiting.reduce(function (min, j) { return Math.min(min, j.createdAt) }, job.createdAt)
+    job.createdAt = first - 1
+    if (job.status === 'paused') {
+      job.status = 'queued'
+      job.stage = 'Waiting in queue'
+    }
+    this.persist()
+    this.emit(job)
+    this.pump()
+  }
+
+  pauseAll(): number {
+    const targets = Array.from(this.jobs.values()).filter(function (j) { return j.status === 'queued' || j.status === 'downloading' })
+    // Queued ones first, so stopping a running one does not start the next.
+    targets.sort(function (a, b) { return (a.status === 'queued' ? 0 : 1) - (b.status === 'queued' ? 0 : 1) })
+    targets.forEach((job) => this.pause(job.id))
+    return targets.length
+  }
+
+  resumeAll(): number {
+    const paused = Array.from(this.jobs.values())
+      .filter(function (j) { return j.status === 'paused' })
+      .sort(function (a, b) { return a.createdAt - b.createdAt })
+    paused.forEach((job) => {
+      job.status = 'queued'
+      job.stage = 'Waiting in queue'
+      job.error = null
+      this.emit(job)
+    })
+    this.persist()
+    this.pump()
+    return paused.length
+  }
+
+  retryFailed(): number {
+    const failed = Array.from(this.jobs.values()).filter(function (j) { return j.status === 'error' })
+    failed.sort(function (a, b) { return a.createdAt - b.createdAt }).forEach((job) => this.retry(job.id))
+    return failed.length
+  }
+
+  private setPaused(job: DownloadJob): void {
+    job.status = 'paused'
+    job.stage = 'Paused'
+    job.speed = null
+    job.eta = null
+    this.persist()
+    this.emit(job)
   }
 
   cancel(id: string): void {
     const job = this.jobs.get(id)
     if (!job) return
-    if (job.status === 'queued') {
-      this.finish(job, 'canceled', { error: 'Canceled before it started' })
+    if (job.status === 'queued' || job.status === 'paused') {
+      this.finish(job, 'canceled', { error: job.status === 'paused' ? 'Canceled' : 'Canceled before it started' })
       return
     }
     const child = this.children.get(id)
@@ -235,7 +370,17 @@ class DownloadManager {
       this.finish(job, 'canceled', { error: 'Canceled' })
       return
     }
-    job.logTail = (job.logTail + '\n[cancel] stopping\n').slice(-4000)
+    this.stop(job, 'cancel')
+  }
+
+  /** Kill the running yt-dlp (and its ffmpeg children); the exit handler finishes the job. */
+  private stop(job: DownloadJob, reason: 'cancel' | 'pause'): void {
+    const child = this.children.get(job.id)
+    if (!child || child.pid === undefined) return
+    this.stopping.set(job.id, reason)
+    job.stage = reason === 'pause' ? 'Pausing…' : 'Stopping…'
+    this.emit(job)
+    job.logTail = (job.logTail + '\n[' + reason + '] stopping\n').slice(-4000)
     try {
       if (process.platform === 'win32') {
         spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
@@ -257,7 +402,7 @@ class DownloadManager {
   retry(id: string): DownloadJob | null {
     const job = this.jobs.get(id)
     if (!job) return null
-    if (job.status === 'downloading' || job.status === 'processing') return job
+    if (isActive(job)) return job
     job.status = 'queued'
     job.percent = 0
     job.speed = null
@@ -412,12 +557,21 @@ class DownloadManager {
     child.on('error', (err) => {
       logError('downloads.child', err)
       this.children.delete(job.id)
+      this.stopping.delete(job.id)
       this.finish(job, 'error', { error: String(err) })
       this.pump()
     })
     child.on('close', (code) => {
       this.children.delete(job.id)
-      if (job.status === 'canceled') {
+      const stopped = this.stopping.get(job.id)
+      this.stopping.delete(job.id)
+      if (stopped === 'pause') {
+        this.setPaused(job)
+        this.pump()
+        return
+      }
+      if (stopped === 'cancel' || job.status === 'canceled') {
+        if (job.status !== 'canceled') this.finish(job, 'canceled', { error: 'Canceled' })
         this.pump()
         return
       }
@@ -452,13 +606,13 @@ class DownloadManager {
   }
 
   private buildArgs(job: DownloadJob, dir: string): string[] {
-    const original = this.requests.get(job.id)
+    const original = this.requests.get(job.id) ?? job.request ?? undefined
     const mode = original?.mode ?? job.mode
     const height: number | null = original?.height ?? settings.get('preferredHeight')
     const audioFormat = original?.audioFormat ?? settings.get('audioFormat')
     const audioQuality = original?.audioQuality ?? settings.get('audioQuality')
     const ffmpeg = ffmpegLocation()
-    const selector = buildFormatSelector(mode, height ?? null, !!ffmpeg)
+    const selector = buildFormatSelector(mode, height ?? null, !!ffmpeg, settings.get('videoCodec'))
     const args = [
       ...baseArgs(),
       '--newline',
@@ -497,8 +651,30 @@ class DownloadManager {
       args.push('--write-subs', '--write-auto-subs', '--sub-langs', langs)
       if (ffmpeg) args.push('--convert-subs', 'srt')
     }
+    const rate = settings.get('rateLimit')
+    if (rate) args.push('--limit-rate', rate)
+    if (ffmpeg) {
+      const section = clipSection(original?.clipStart, original?.clipEnd)
+      if (section) args.push('--download-sections', section)
+      if (original?.sponsorBlock) args.push('--sponsorblock-remove', 'sponsor,selfpromo,interaction')
+      // Tags, chapters and cover art inside the file, so other players show them too.
+      // (With --write-thumbnail as well, the separate image is kept for the Library.)
+      if (settings.get('embedMetadata')) {
+        args.push('--embed-metadata', '--embed-chapters')
+        if (mode === 'audio_only' ? audioFormat !== 'wav' : true) args.push('--embed-thumbnail')
+      }
+    }
     args.push('--', job.url)
     return args
+  }
+
+  /** Overall state for the taskbar: fraction done of what is running or waiting, or null when idle. */
+  summary(): { active: number; fraction: number | null; paused: number } {
+    const pending = Array.from(this.jobs.values()).filter(isPending)
+    const paused = Array.from(this.jobs.values()).filter(function (j) { return j.status === 'paused' }).length
+    if (!pending.length) return { active: 0, fraction: null, paused }
+    const total = pending.reduce(function (sum, j) { return sum + (j.status === 'queued' ? 0 : j.percent) }, 0)
+    return { active: pending.length, fraction: Math.max(0.01, Math.min(1, total / (pending.length * 100))), paused }
   }
 
   private finish(job: DownloadJob, status: JobStatus, extra: { error?: string | null; outputPath?: string | null }): void {
@@ -518,6 +694,13 @@ class DownloadManager {
     this.persist()
     this.emit(job)
     log('downloads.finish', job.id, status, job.outputPath ?? '')
+    if (status === 'completed' || status === 'error') {
+      try {
+        this.events.onFinish?.(job)
+      } catch (err) {
+        logError('downloads.onFinish', err)
+      }
+    }
   }
 
   private emit(job: DownloadJob, removed = false): void {
@@ -534,6 +717,13 @@ class DownloadManager {
       title: job.title,
     }
     broadcast(IPC.jobsProgress, { job: payload, full: job, removed })
+    if (this.events.onChange) {
+      try {
+        this.events.onChange(this.list())
+      } catch (err) {
+        logError('downloads.onChange', err)
+      }
+    }
   }
 
   private persist(): void {

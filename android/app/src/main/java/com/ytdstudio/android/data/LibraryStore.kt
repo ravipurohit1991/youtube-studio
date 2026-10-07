@@ -123,6 +123,33 @@ class LibraryStore(context: Context) {
         )
     }
 
+    /** Everything, for a backup file. */
+    fun exportJson(): JSONObject = toJson(stateFlow.value)
+
+    /**
+     * Merge a backup in: favorites are combined, the newer progress wins per item, playlists and synced
+     * playlists are added (same id: the incoming one gains any items it is missing).
+     */
+    fun merge(o: JSONObject): LibraryState {
+        val incoming = fromJson(o)
+        edit { s ->
+            val progress = s.progress.toMutableMap()
+            incoming.progress.forEach { (key, p) -> if ((progress[key]?.updatedAt ?: -1) < p.updatedAt) progress[key] = p }
+            val playlists = s.playlists.toMutableList()
+            incoming.playlists.forEach { p ->
+                val i = playlists.indexOfFirst { it.id == p.id }
+                if (i < 0) playlists += p else playlists[i] = playlists[i].copy(items = (playlists[i].items + p.items).distinct())
+            }
+            val saved = s.saved.toMutableList()
+            incoming.saved.forEach { p ->
+                val i = saved.indexOfFirst { it.id == p.id }
+                if (i < 0) saved += p else saved[i] = saved[i].copy(knownIds = saved[i].knownIds + p.knownIds)
+            }
+            s.copy(favorites = s.favorites + incoming.favorites, progress = progress, playlists = playlists, saved = saved)
+        }
+        return stateFlow.value
+    }
+
     private fun editPlaylist(id: String, transform: (UserPlaylist) -> UserPlaylist) = edit { s ->
         s.copy(playlists = s.playlists.map { if (it.id == id) transform(it) else it })
     }

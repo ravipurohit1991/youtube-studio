@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,12 +29,17 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +48,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -78,8 +89,20 @@ fun HomeScreen(vm: MainViewModel) {
             Triple<PlaylistRef, String, List<LibraryItem>>(PlaylistRef.User(p.id), p.name, p.items.mapNotNull { byKey[it] })
         }
 
+    val streams by vm.prefs.streams.collectAsStateWithLifecycle()
+    val totalSeconds = items.sumOf { it.durationMs } / 1000.0
+
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item { Hero(vm) }
+        if (items.isNotEmpty() || state.saved.isNotEmpty()) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatTile(Icons.Rounded.VideoLibrary, "${items.size}", if (items.size == 1) "item" else "items", Modifier.weight(1f)) { vm.tab = Tab.LIBRARY }
+                    StatTile(Icons.Rounded.Schedule, formatHours(totalSeconds), "offline", Modifier.weight(1f)) { vm.tab = Tab.LIBRARY }
+                    StatTile(Icons.Rounded.Sync, "${state.saved.size}", "followed", Modifier.weight(1f)) { vm.tab = Tab.DOWNLOADS }
+                }
+            }
+        }
         item {
             Surface(
                 onClick = { vm.tab = Tab.DISCOVER },
@@ -180,6 +203,38 @@ fun HomeScreen(vm: MainViewModel) {
                 }
             }
         }
+        if (streams.isNotEmpty()) {
+            item { SectionHeader("Recently streamed", Modifier.padding(start = 16.dp, end = 4.dp), "Clear") { vm.prefs.clearStreams() } }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(streams.take(15), key = { "s:" + it.url }) { entry ->
+                        Column(
+                            Modifier.width(196.dp).clip(MaterialTheme.shapes.medium).clickable {
+                                vm.watch(entry.url, entry.title, entry.thumbnail, false) { source, thumb ->
+                                    context.startActivity(PlayerActivity.stream(context, source, thumb))
+                                }
+                            },
+                        ) {
+                            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MaterialTheme.shapes.small)) {
+                                Thumb(entry.thumbnail, Modifier.matchParentSize())
+                                if (vm.resolvingStream == entry.url) {
+                                    Box(Modifier.matchParentSize().background(Color(0x88000000)), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                                    }
+                                }
+                            }
+                            Text(entry.title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                            Text(
+                                listOfNotNull(entry.uploader, timeAgo(entry.at)).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         if (favorites.isNotEmpty()) {
             item { SectionHeader("Favorites", Modifier.padding(start = 16.dp, end = 4.dp), "See all") { vm.libraryTab = 3; vm.tab = Tab.LIBRARY } }
             item {
@@ -214,12 +269,13 @@ private fun Hero(vm: MainViewModel) {
                 }
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Text("YTD Studio", style = MaterialTheme.typography.headlineSmall)
-                    Text("Watch, download and organize", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+                    Text(greeting(), style = MaterialTheme.typography.headlineSmall)
+                    Text("Paste a link to watch or save it", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(18.dp))
             LinkBar(vm)
+            ClipboardChip(vm)
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Share, null, tint = scheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
@@ -265,6 +321,45 @@ fun LinkBar(vm: MainViewModel, modifier: Modifier = Modifier) {
                 IconButton(onClick = { vm.url = "" }) { Icon(Icons.Rounded.Close, "Clear") }
                 FilledIconButton(onClick = { vm.analyze() }) { Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Go") }
             }
+        }
+    }
+}
+
+/**
+ * Offers the clipboard when it holds text. Only the clip's type is checked here, so Android does not
+ * show its "pasted from your clipboard" notice until the chip is tapped.
+ */
+@Composable
+private fun ClipboardChip(vm: MainViewModel) {
+    val context = LocalContext.current
+    var hasText by remember { mutableStateOf(false) }
+    LaunchedEffect(vm.tab, vm.sheetOpen) {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        hasText = clipboard.hasPrimaryClip() && clipboard.primaryClipDescription?.hasMimeType("text/*") == true
+    }
+    if (!hasText || vm.url.isNotEmpty()) return
+    AssistChip(
+        onClick = {
+            val link = clipboardLink(context)
+            if (link == null) {
+                vm.message = "There is no link on the clipboard."
+                hasText = false
+            } else vm.analyze(link)
+        },
+        label = { Text("Paste the copied link") },
+        leadingIcon = { Icon(Icons.Rounded.ContentPaste, null, Modifier.size(18.dp)) },
+        modifier = Modifier.padding(top = 8.dp),
+    )
+}
+
+@Composable
+private fun StatTile(icon: ImageVector, value: String, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(value, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

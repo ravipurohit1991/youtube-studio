@@ -172,24 +172,38 @@ fun MediaThumb(item: LibraryItem, progress: WatchProgress?, modifier: Modifier =
     }
 }
 
+/**
+ * Selection for bulk actions: with [onSelect] set, a long press selects instead of opening the menu,
+ * and while [selecting] a tap toggles the item.
+ */
+class Selection(val selected: Boolean, val selecting: Boolean, val onSelect: () -> Unit)
+
 /** One library item as a list row: thumbnail, title, details, favorite and the menu. */
 @Composable
-fun MediaRow(item: LibraryItem, state: LibraryState, actions: ItemActions, leading: String? = null) {
+fun MediaRow(item: LibraryItem, state: LibraryState, actions: ItemActions, leading: String? = null, selection: Selection? = null) {
     val progress = state.progress[item.key]
     val favorite = item.key in state.favorites
     var menu by remember { mutableStateOf(false) }
+    val picked = selection?.selected == true
     Row(
         Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .combinedClickable(onClick = actions.onPlay, onLongClick = { menu = true })
+            .background(if (picked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+            .combinedClickable(
+                onClick = { if (selection?.selecting == true) selection.onSelect() else actions.onPlay() },
+                onLongClick = { selection?.onSelect?.invoke() ?: run { menu = true } },
+            )
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leading != null) {
             Text(leading, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(26.dp), textAlign = TextAlign.Center)
         }
-        MediaThumb(item, progress, Modifier.width(132.dp), compact = true)
+        Box {
+            MediaThumb(item, progress, Modifier.width(132.dp), compact = true)
+            if (picked) SelectedMark(Modifier.align(Alignment.TopEnd))
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -206,17 +220,25 @@ fun MediaRow(item: LibraryItem, state: LibraryState, actions: ItemActions, leadi
 
 /** A large card for carousels and grids. */
 @Composable
-fun MediaTile(item: LibraryItem, state: LibraryState, actions: ItemActions, modifier: Modifier = Modifier) {
+fun MediaTile(item: LibraryItem, state: LibraryState, actions: ItemActions, modifier: Modifier = Modifier, selection: Selection? = null) {
     val progress = state.progress[item.key]
     val favorite = item.key in state.favorites
     var menu by remember { mutableStateOf(false) }
+    val picked = selection?.selected == true
     Column(
         modifier
             .clip(MaterialTheme.shapes.medium)
-            .combinedClickable(onClick = actions.onPlay, onLongClick = { menu = true })
+            .background(if (picked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+            .combinedClickable(
+                onClick = { if (selection?.selecting == true) selection.onSelect() else actions.onPlay() },
+                onLongClick = { selection?.onSelect?.invoke() ?: run { menu = true } },
+            )
             .padding(4.dp),
     ) {
-        MediaThumb(item, progress, Modifier.fillMaxWidth())
+        Box {
+            MediaThumb(item, progress, Modifier.fillMaxWidth())
+            if (picked) SelectedMark(Modifier.align(Alignment.TopEnd).padding(4.dp))
+        }
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
                 Text(item.title, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
@@ -228,6 +250,14 @@ fun MediaTile(item: LibraryItem, state: LibraryState, actions: ItemActions, modi
             }
         }
     }
+}
+
+@Composable
+private fun SelectedMark(modifier: Modifier = Modifier) {
+    Icon(
+        Icons.Rounded.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary,
+        modifier = modifier.padding(4.dp).size(22.dp).background(Color.White, CircleShape),
+    )
 }
 
 private fun itemDetails(item: LibraryItem, progress: WatchProgress?): String {

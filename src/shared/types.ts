@@ -1,11 +1,15 @@
 /** Shared types used by the main process, preload bridge and renderer UI. */
 
-export type TabId = 'discover' | 'stream' | 'download' | 'library' | 'playlists' | 'settings'
+export type TabId = 'home' | 'discover' | 'stream' | 'download' | 'library' | 'playlists' | 'settings'
 export type DownloadMode = 'video_audio' | 'audio_only'
 export type AudioFormat = 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac'
 export type AudioQuality = '0' | '2' | '5'
 export type ThemeMode = 'dark' | 'light' | 'system'
 export type BrowserName = '' | 'chrome' | 'edge' | 'firefox' | 'brave' | 'opera' | 'vivaldi'
+/** Accent color presets; the same names exist in the Android app. */
+export type AccentName = 'crimson' | 'violet' | 'ocean' | 'emerald' | 'amber' | 'rose'
+/** compatible: H.264 first (plays everywhere). best: highest quality codec (VP9/AV1 when larger). */
+export type VideoCodec = 'compatible' | 'best'
 
 export type FormatKind = 'muxed' | 'video' | 'audio'
 
@@ -57,7 +61,7 @@ export interface VideoMeta {
   extractor: string | null
 }
 
-export type JobStatus = 'queued' | 'downloading' | 'processing' | 'completed' | 'error' | 'canceled'
+export type JobStatus = 'queued' | 'downloading' | 'processing' | 'paused' | 'completed' | 'error' | 'canceled'
 
 export interface DownloadJob {
   id: string
@@ -86,6 +90,8 @@ export interface DownloadJob {
   createdAt: number
   startedAt: number | null
   finishedAt: number | null
+  /** The options it was queued with, so retry and resume (also after a restart) use the same ones. */
+  request?: DownloadRequest | null
 }
 
 export interface DownloadRequest {
@@ -107,6 +113,11 @@ export interface DownloadRequest {
   folder?: string | null
   /** 1-based position in the playlist; prefixes the file name so the folder keeps playlist order. */
   playlistIndex?: number | null
+  /** Only download this part of the video, in seconds (null = from the start / to the end). */
+  clipStart?: number | null
+  clipEnd?: number | null
+  /** Cut sponsor, self-promotion and "like and subscribe" segments out (SponsorBlock, needs ffmpeg). */
+  sponsorBlock?: boolean
 }
 
 export type MediaKind = 'video' | 'audio'
@@ -132,6 +143,14 @@ export interface LibraryItem {
   key: string
   /** Subfolder of the downloads folder the file is in (a downloaded playlist), or null. */
   folder: string | null
+  /** Subtitle files next to it, served as WebVTT for the player. */
+  subtitles: SubtitleTrack[]
+}
+
+export interface SubtitleTrack {
+  /** Language code from the file name ("en", "es-419"), or "sub". */
+  lang: string
+  url: string
 }
 
 /** Where playback stopped. watched is set once the end was reached (or by hand). */
@@ -207,6 +226,39 @@ export interface Settings {
   aiPersonalize: boolean
   /** Let Discover look the request up on the web (Ollama web search) before planning searches. */
   aiUseWeb: boolean
+  /** Accent color of the interface. */
+  accent: AccentName
+  /** Windows notification when a download finishes while the app is in the background. */
+  notifyOnComplete: boolean
+  /** Offer to watch or download a YouTube link you copy, when you come back to the app. */
+  watchClipboard: boolean
+  /** Download speed cap for yt-dlp (--limit-rate), e.g. "2M"; empty = unlimited. */
+  rateLimit: string
+  /** Cut sponsor segments out of downloads by default (SponsorBlock). */
+  sponsorBlock: boolean
+  /** Embed cover art, chapters and tags into the downloaded file. */
+  embedMetadata: boolean
+  /** Sync saved playlists and channels automatically every N hours (0 = only by hand). */
+  autoSyncHours: number
+  /** Which video codec downloads prefer. */
+  videoCodec: VideoCodec
+}
+
+export type ToastTone = 'info' | 'success' | 'error'
+
+/** A message from the main process for the window (auto-sync results and the like). */
+export interface ToastPayload {
+  message: string
+  tone: ToastTone
+}
+
+/** What a backup file holds. Paths and tool locations are left out: they belong to one machine. */
+export interface BackupSummary {
+  path: string
+  favorites: number
+  playlists: number
+  synced: number
+  progress: number
 }
 
 export interface ToolStatus {
@@ -482,6 +534,13 @@ export interface DesktopApi {
   cancelJob(id: string): Promise<IpcResult<true>>
   removeJob(id: string): Promise<IpcResult<true>>
   retryJob(id: string): Promise<IpcResult<true>>
+  pauseJob(id: string): Promise<IpcResult<true>>
+  resumeJob(id: string): Promise<IpcResult<true>>
+  /** Move a queued job to the front of the queue. */
+  prioritizeJob(id: string): Promise<IpcResult<true>>
+  pauseAll(): Promise<IpcResult<number>>
+  resumeAll(): Promise<IpcResult<number>>
+  retryFailed(): Promise<IpcResult<number>>
   clearFinishedJobs(): Promise<IpcResult<true>>
   scanLibrary(): Promise<IpcResult<LibraryItem[]>>
   deleteLibraryItem(absPath: string): Promise<IpcResult<string[]>>
@@ -507,6 +566,10 @@ export interface DesktopApi {
   savePlaylist(playlist: SavedPlaylist): Promise<IpcResult<LibraryState>>
   removeSavedPlaylist(id: string): Promise<IpcResult<LibraryState>>
   syncPlaylist(id: string): Promise<IpcResult<SyncResult>>
+  /** Save favorites, playlists, progress, synced playlists, AI taste and settings to a file. Null when canceled. */
+  exportBackup(): Promise<IpcResult<BackupSummary | null>>
+  /** Restore a backup file (merges into what is there). Null when canceled. */
+  importBackup(): Promise<IpcResult<BackupSummary | null>>
   aiStatus(): Promise<IpcResult<AiStatus>>
   aiSetKey(key: string): Promise<IpcResult<AiStatus>>
   aiClearKey(): Promise<IpcResult<AiStatus>>
@@ -523,4 +586,5 @@ export interface DesktopApi {
   onLibraryState(cb: (state: LibraryState) => void): () => void
   onJobProgress(cb: (payload: JobProgressPayload) => void): () => void
   onToolStatus(cb: (status: UpdateStatus) => void): () => void
+  onToast(cb: (toast: ToastPayload) => void): () => void
 }

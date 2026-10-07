@@ -22,10 +22,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ContentCut
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -39,6 +43,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -48,6 +53,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -192,6 +201,59 @@ private fun totalDuration(meta: VideoMeta): String? {
     return if (seconds > 0) formatDuration(seconds) else null
 }
 
+/** Clip range and SponsorBlock, folded away until needed. */
+@Composable
+private fun MoreOptions(vm: MainViewModel, meta: VideoMeta) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val clipError = if (meta.isPlaylist) null else vm.clipRange().second
+    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("More options", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                val summary = listOfNotNull(
+                    if (!meta.isPlaylist && (vm.clipFrom.isNotBlank() || vm.clipTo.isNotBlank())) "clip" else null,
+                    if (vm.sponsorBlock) "no sponsors" else null,
+                ).joinToString(" · ")
+                if (summary.isNotEmpty()) Text(summary, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+                Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+            }
+            if (open) {
+                Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (!meta.isPlaylist) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.ContentCut, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Only a part of the video", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(vm.clipFrom, { vm.clipFrom = it }, singleLine = true, label = { Text("From") }, placeholder = { Text("0:00") }, modifier = Modifier.weight(1f))
+                            OutlinedTextField(vm.clipTo, { vm.clipTo = it }, singleLine = true, label = { Text("To") }, placeholder = { Text(meta.duration?.let { formatDuration(it) } ?: "end") }, modifier = Modifier.weight(1f))
+                        }
+                        Text(
+                            clipError ?: "Leave empty for the whole video. Cuts land on the nearest keyframe.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (clipError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Shield, null, tint = Ok, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Skip sponsors", style = MaterialTheme.typography.bodyMedium)
+                            Text("Cut sponsor, self-promo and \"subscribe\" segments (SponsorBlock).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = vm.sponsorBlock, onCheckedChange = { vm.sponsorBlock = it })
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DownloadOptions(vm: MainViewModel, meta: VideoMeta) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -205,7 +267,9 @@ private fun DownloadOptions(vm: MainViewModel, meta: VideoMeta) {
                 val offered = meta.heights.ifEmpty { listOf(1080, 720, 480, 360) }
                 val options = listOf(0) + Prefs.HEIGHTS.filter { h -> h > 0 && offered.any { it >= h } }.ifEmpty { offered }
                 options.distinct().forEach { h ->
-                    FilterChip(selected = vm.height == h, onClick = { vm.height = h }, label = { Text(if (h == 0) "Best" else "${h}p") })
+                    // Size estimates come from the formats YouTube reported (single videos only).
+                    val size = meta.sizes[h]?.let { " · " + formatBytes(it) } ?: ""
+                    FilterChip(selected = vm.height == h, onClick = { vm.height = h }, label = { Text((if (h == 0) "Best" else "${h}p") + size) })
                 }
             } else {
                 Prefs.AUDIO_FORMATS.forEach { f ->
@@ -213,6 +277,10 @@ private fun DownloadOptions(vm: MainViewModel, meta: VideoMeta) {
                 }
             }
         }
+        if (vm.mode == DownloadMode.AUDIO && meta.audioSize != null) {
+            Text("About " + formatBytes(meta.audioSize), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        MoreOptions(vm, meta)
         if (meta.isPlaylist) {
             Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

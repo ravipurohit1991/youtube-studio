@@ -8,6 +8,8 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Rational
 import android.view.WindowManager
 import android.widget.Toast
@@ -28,6 +30,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -88,6 +93,27 @@ class PlayerActivity : ComponentActivity() {
     private var pageUrls: Map<String, String> = emptyMap()
     private var currentMediaId by mutableStateOf<String?>(null)
     private var insightsOpen by mutableStateOf(false)
+    /** Sleep timer: pause at this time, or (sleepAtEnd) when the current item finishes. */
+    private var sleepEndsAt by mutableStateOf<Long?>(null)
+    private var sleepAtEnd by mutableStateOf(false)
+    private var sleepLeft by mutableStateOf("")
+    private var sleepDialog by mutableStateOf(false)
+    private val sleepHandler = Handler(Looper.getMainLooper())
+    private val sleepTick = object : Runnable {
+        override fun run() {
+            val end = sleepEndsAt ?: return
+            val left = end - System.currentTimeMillis()
+            if (left <= 0) {
+                controller?.pause()
+                sleepEndsAt = null
+                sleepLeft = ""
+                Toast.makeText(this@PlayerActivity, "Sleep timer: paused", Toast.LENGTH_SHORT).show()
+                return
+            }
+            sleepLeft = formatDuration(left / 1000.0)
+            sleepHandler.postDelayed(this, 1000)
+        }
+    }
     /** Another player screen took over the session: leaving this one must not touch playback. */
     private var replaced = false
     private val app get() = application as YtdApp
@@ -99,6 +125,16 @@ class PlayerActivity : ComponentActivity() {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             currentMediaId = mediaItem?.mediaId
+            // "End of this item": the previous one finished on its own, so stop here.
+            if (sleepAtEnd && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                controller?.pause()
+                sleepAtEnd = false
+                Toast.makeText(this@PlayerActivity, "Sleep timer: stopped after that one", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED) sleepAtEnd = false
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -163,6 +199,12 @@ class PlayerActivity : ComponentActivity() {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(nowPlaying, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
+                            if (sleepLeft.isNotEmpty() || sleepAtEnd) {
+                                Text(if (sleepAtEnd) "after this" else sleepLeft, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+                            IconButton(onClick = { sleepDialog = true }) {
+                                Icon(Icons.Rounded.Bedtime, "Sleep timer", tint = if (sleepEndsAt != null || sleepAtEnd) MaterialTheme.colorScheme.primary else Color.White)
+                            }
                             if (currentPageUrl() != null) {
                                 IconButton(onClick = { insightsOpen = true }) {
                                     Icon(Icons.Rounded.AutoAwesome, "AI insights", tint = Color.White)
@@ -171,6 +213,7 @@ class PlayerActivity : ComponentActivity() {
                         }
                     }
                     InsightsSheet()
+                    if (sleepDialog) SleepDialog()
                 }
             }
         }
@@ -253,6 +296,45 @@ class PlayerActivity : ComponentActivity() {
 
     private fun currentPageUrl(): String? = currentMediaId?.let { pageUrls[it] }
 
+    @androidx.compose.runtime.Composable
+    private fun SleepDialog() {
+        val options = listOf(15, 30, 45, 60, 90)
+        AlertDialog(
+            onDismissRequest = { sleepDialog = false },
+            title = { Text("Sleep timer") },
+            text = {
+                Column {
+                    options.forEach { minutes ->
+                        TextButton(onClick = { startSleep(minutes) }, modifier = Modifier.fillMaxWidth()) { Text("$minutes minutes") }
+                    }
+                    TextButton(onClick = {
+                        stopSleep()
+                        sleepAtEnd = true
+                        sleepDialog = false
+                    }, modifier = Modifier.fillMaxWidth()) { Text("End of this item") }
+                }
+            },
+            confirmButton = {
+                if (sleepEndsAt != null || sleepAtEnd) TextButton(onClick = { stopSleep(); sleepDialog = false }) { Text("Turn off") }
+            },
+            dismissButton = { TextButton(onClick = { sleepDialog = false }) { Text("Close") } },
+        )
+    }
+
+    private fun startSleep(minutes: Int) {
+        stopSleep()
+        sleepEndsAt = System.currentTimeMillis() + minutes * 60_000L
+        sleepDialog = false
+        sleepHandler.post(sleepTick)
+    }
+
+    private fun stopSleep() {
+        sleepHandler.removeCallbacks(sleepTick)
+        sleepEndsAt = null
+        sleepAtEnd = false
+        sleepLeft = ""
+    }
+
     /** Summary and questions about the playing video; key moments seek the player. */
     @kotlin.OptIn(ExperimentalMaterial3Api::class)
     @androidx.compose.runtime.Composable
@@ -333,6 +415,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        sleepHandler.removeCallbacks(sleepTick)
         val c = controller
         if (isFinishing && !replaced && c != null && showsVideo() && !app.prefs.settings.value.backgroundVideo) {
             c.stop()
