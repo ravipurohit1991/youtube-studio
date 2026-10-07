@@ -78,7 +78,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           pnpm build
-          pnpm exec electron-builder --mac dmg --publish never
+          pnpm exec electron-builder --mac --publish never
 
       - name: Check the app bundle
         run: |
@@ -87,20 +87,6 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           plutil -p "$app/Contents/Info.plist" | grep -E 'CFBundleShortVersionString|CFBundleIdentifier'
           ls -la release/*.dmg
-
-      # The app downloads ffmpeg on first run; report (without failing the build) if a source moved.
-      - name: Check ffmpeg download sources
-        continue-on-error: true
-        run: |
-          for url in \
-            https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip \
-            https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffprobe.zip \
-            https://evermeet.cx/ffmpeg/getrelease/zip \
-            https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip; do
-            echo "== $url"
-            curl -sSL --max-time 120 -o /tmp/probe.zip -w '%{http_code} %{size_download} bytes %{url_effective}\n' "$url"
-            unzip -l /tmp/probe.zip | tail -5
-          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -150,6 +136,8 @@ jobs:
           mkdir -p dist ios/Payload
           cp -R ios/build/Build/Products/Release-iphoneos/YTDStudio.app ios/Payload/
           (cd ios && zip -qry "../dist/YTD-Studio-$version-iOS-unsigned.ipa" Payload)
+          plutil -p ios/Payload/YTDStudio.app/Info.plist | grep -E 'CFBundleShortVersionString|CFBundleVersion|CFBundleIdentifier'
+          ls ios/Payload/YTDStudio.app
           ls -la dist
 
       - uses: actions/upload-artifact@v4
