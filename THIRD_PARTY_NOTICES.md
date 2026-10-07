@@ -3,13 +3,14 @@
 ## Tools downloaded at runtime (not distributed with this project)
 
 YTD Studio does not include, bundle or redistribute these programs. On first run the app downloads
-them from their official sources onto the user's own machine (`%APPDATA%/YTD Studio/bin`) and runs
-them as separate processes.
+them from their official sources onto the user's own machine (`%APPDATA%/YTD Studio/bin`, on macOS
+`~/Library/Application Support/YTD Studio/bin`) and runs them as separate processes.
 
 | Tool | Source | License |
 | --- | --- | --- |
 | yt-dlp | https://github.com/yt-dlp/yt-dlp (GitHub releases) | The Unlicense |
-| FFmpeg / ffprobe | https://www.gyan.dev/ffmpeg/builds/ (fallback: https://github.com/yt-dlp/FFmpeg-Builds) | GPL v3 build of FFmpeg; license text is saved next to the binaries as `ffmpeg-LICENSE.txt` |
+| FFmpeg / ffprobe (Windows) | https://www.gyan.dev/ffmpeg/builds/ (fallback: https://github.com/yt-dlp/FFmpeg-Builds) | GPL v3 build of FFmpeg; license text is saved next to the binaries as `ffmpeg-LICENSE.txt` |
+| FFmpeg / ffprobe (macOS) | https://ffmpeg.martin-riedl.de (fallback: https://evermeet.cx/ffmpeg/) | GPL build of FFmpeg |
 
 FFmpeg source code is available from https://ffmpeg.org and the build providers above.
 
@@ -37,3 +38,11 @@ apps to run executables downloaded at runtime:
 Because the APK combines GPL-3.0 components, the APK as distributed is covered by GPL-3.0. The
 complete corresponding source for this app is this repository; sources for the bundled components
 are at the links above. YTD Studio's own code remains MIT licensed (MIT is GPL-compatible).
+
+## iOS app (bundled in the IPA)
+
+| Component | Source | License |
+| --- | --- | --- |
+| YouTubeKit | https://github.com/alexeichhorn/YouTubeKit | MIT |
+
+Everything else in the iOS app is Apple's system frameworks (SwiftUI, AVFoundation, AVKit).

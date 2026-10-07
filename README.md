@@ -3,9 +3,9 @@
 # YTD Studio
 
 **Watch YouTube without ads, save anything in one click, and keep it all organized.**
-A Windows desktop app and an Android app, with an optional AI layer that finds videos *for you*.
+A desktop app for Windows and macOS, plus apps for Android and iPhone, with an optional AI layer that finds videos *for you*.
 
-[Download the latest release](../../releases/latest) · [Features](#features) · [Android](#android-app) · [AI](#ai-discover-summaries-and-smart-playlists-ollama) · [Build from source](#quick-start)
+[Download the latest release](../../releases/latest) · [Features](#features) · [macOS](#macos-app) · [iPhone](#iphone-and-ipad-app) · [Android](#android-app) · [AI](#ai-discover-summaries-and-smart-playlists-ollama) · [Build from source](#quick-start)
 
 <img src="docs/screenshots/home.png" alt="YTD Studio Home: a pasted link with Watch now, one-click video and audio downloads, stats and downloads in progress" width="900">
 
@@ -17,7 +17,8 @@ A Windows desktop app and an Android app, with an optional AI layer that finds v
 
 A complete redesign with a new **Home** screen, a **command palette**, **pause and resume**, **clips**,
 **SponsorBlock**, **subtitles in the player**, **auto-sync for followed channels**, **backup and restore**,
-**accent colors** and a lot of small touches, in both apps. See the [release notes](.github/release-notes/v2.0.0.md).
+**accent colors** and a lot of small touches. New in 2.0: a **[macOS app](#macos-app)** (Apple Silicon and Intel),
+a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. See the [release notes](.github/release-notes/v2.0.0.md).
 
 ## Screenshots
 
@@ -107,18 +108,23 @@ A complete redesign with a new **Home** screen, a **command palette**, **pause a
 
 ## Download the builds
 
-GitHub Actions builds both apps on every push (`.github/workflows/build.yml`):
+The easiest way: open the [latest release](../../releases/latest) and download
 
-The easiest way: open the [latest release](../../releases/latest) and download the Windows installer
-(`YTD-Studio-…-setup.exe`) or the Android APK (`…-arm64-v8a-release.apk` for practically every phone).
+| File | For |
+| --- | --- |
+| `YTD-Studio-…-setup.exe` | Windows |
+| `YTD-Studio-…-mac-arm64.dmg` | Macs with Apple Silicon (M1 and newer) |
+| `YTD-Studio-…-mac-x64.dmg` | Intel Macs |
+| `YTD-Studio-…-iOS-unsigned.ipa` | iPhone and iPad, [installed with AltStore or Sideloadly](#installing-on-iphone-or-ipad) |
+| `…-arm64-v8a-release.apk` | Practically every Android phone |
 
-Every push is also built by GitHub Actions:
+GitHub Actions also builds every app on every push (`.github/workflows/build.yml`):
 
 1. Open the repository's **Actions** tab and pick the latest **Build** run.
-2. Under **Artifacts**, download **YTD-Studio-Windows** (the `...-setup.exe` installer) and/or
-   **YTD-Studio-Android** (the APKs).
+2. Under **Artifacts**, download **YTD-Studio-Windows** (the installer), **YTD-Studio-macOS** (the disk
+   images), **YTD-Studio-iOS** (the IPA) and/or **YTD-Studio-Android** (the APKs).
 
-Pushing a tag such as `v1.0.1` also creates a **GitHub Release** with both attached, which is easier
+Pushing a tag such as `v1.0.1` also creates a **GitHub Release** with all of them attached, which is easier
 to open on a phone (no sign-in or zip file).
 
 ## Quick start
@@ -132,6 +138,7 @@ pnpm dev          # development window with hot reload
 pnpm build        # compile main / preload / renderer into out/
 pnpm start        # run the compiled app
 pnpm dist         # NSIS installer in release/
+pnpm exec electron-builder --mac dmg   # on a Mac: disk images in release/
 pnpm dist:dir     # unpacked app in release/win-unpacked/
 pnpm typecheck    # tsc for the node and web projects
 ```
@@ -141,11 +148,13 @@ pnpm typecheck    # tsc for the node and web projects
 ## First run
 
 **yt-dlp and ffmpeg are not part of this repository or the installer.** Both are downloaded by the app
-itself the first time it starts, into `%APPDATA%/YTD Studio/bin`, and that copy is used from then on:
+itself the first time it starts, into `%APPDATA%/YTD Studio/bin` (macOS: `~/Library/Application Support/YTD Studio/bin`),
+and that copy is used from then on:
 
 - **yt-dlp**: the newest `yt-dlp.exe` from the official GitHub release.
 - **ffmpeg + ffprobe**: the Windows release build from gyan.dev (about 115 MB; falls back to
-  yt-dlp's FFmpeg-Builds on GitHub). Only `ffmpeg.exe`, `ffprobe.exe` and the license text are
+  yt-dlp's FFmpeg-Builds on GitHub). On macOS, the static builds from ffmpeg.martin-riedl.de for your
+  Mac's chip (falls back to evermeet.cx); a Homebrew `ffmpeg` / `yt-dlp` is used if you already have one. Only `ffmpeg.exe`, `ffprobe.exe` and the license text are
   extracted. They are only needed to join separate video and audio streams (1080p and up) and to
   convert audio to MP3/WAV/FLAC/OPUS.
 
@@ -348,6 +357,81 @@ Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg li
 
 ---
 
+## macOS app
+
+The desktop app runs on macOS 12 or newer, natively on Apple Silicon and Intel: the same Home, Discover,
+Stream, Download, Library, Playlists, Settings and AI features as on Windows. Shortcuts use <kbd>⌘</kbd>
+instead of <kbd>Ctrl</kbd> (⌘K, ⌘1 … ⌘7, ⌘V), the standard Mac menus are there, and closing the window keeps
+downloads running (click the Dock icon to bring it back).
+
+**Installing:** open the `.dmg` for your Mac (`mac-arm64` for Apple Silicon, `mac-x64` for Intel) and drag
+*YTD Studio* to Applications. The app is signed ad hoc but not notarized (that needs a paid Apple developer
+account), so the first time, **right-click the app > Open > Open**. On macOS 15 and newer, open it once,
+then go to **System Settings > Privacy & Security** and click **Open Anyway**. Or, in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/YTD Studio.app"
+```
+
+Logs and the downloaded tools live in `~/Library/Application Support/YTD Studio/`.
+
+## iPhone and iPad app
+
+`ios/` is a native SwiftUI app (iOS 16 or newer). iOS does not allow apps to run yt-dlp, so it uses
+[YouTubeKit](https://github.com/alexeichhorn/YouTubeKit), a Swift library that reads YouTube's stream
+links on the device, and Apple's own AVFoundation to join video and audio.
+
+| Tab | What it does |
+| --- | --- |
+| Home | Paste a link (or open `ytdstudio://open?url=<link>` from a Shortcut) and get **Watch now** (ad-free, picture-in-picture, AirPlay), **Listen** (keeps playing with the screen off), one-tap **Video** (your default quality) and **Audio** downloads, and every quality with its exact size. *Continue watching* below. |
+| Downloads | Live queue (two at a time) with progress, cancel, retry and Retry failed. |
+| Library | Videos and audio with search, filters (videos, audio, favorites), five sort orders, favorites, watched state and resume. Share a file, save a video to Photos, copy the YouTube link. |
+| Settings | Default video quality, the optional fallback server, storage used, delete all. |
+
+Videos are saved as MP4 (H.264, up to 1080p; the higher resolutions YouTube only serves as VP9/AV1, which
+iOS cannot save as MP4 without re-encoding) and audio as M4A. Everything is in the **Files** app under
+*On My iPhone > YTD Studio*, in `Videos/` and `Music/`. When YouTube changes something and on-device
+extraction fails, the app can ask the YouTubeKit server for the links (Settings > *Fallback server*, on by
+default; only the video ID is sent). Not in the iOS app yet: playlists and channels, clips, SponsorBlock and
+the AI features.
+
+### Installing on iPhone or iPad
+
+Apple only lets App Store apps or apps signed for your own device run on an iPhone, so the release has an
+**unsigned IPA** for a sideloading tool, which signs it with your own Apple ID:
+
+1. Install [AltStore](https://altstore.io) (or [Sideloadly](https://sideloadly.io)) on your computer and
+   follow its setup.
+2. Download `YTD-Studio-<version>-iOS-unsigned.ipa` and open it with AltStore / drop it on Sideloadly.
+3. On the phone: Settings > General > VPN & Device Management > trust your Apple ID (and, on iOS 16+,
+   turn on Settings > Privacy & Security > **Developer Mode**).
+
+With a free Apple ID the signature lasts 7 days; AltStore refreshes it automatically.
+
+### Building the iOS app yourself
+
+Needs a Mac with Xcode 16 and [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+
+```bash
+brew install xcodegen
+cd ios
+xcodegen generate         # creates YTDStudio.xcodeproj from project.yml
+open YTDStudio.xcodeproj  # pick your team under Signing & Capabilities, then Run on your phone
+```
+
+```text
+ios/YTDStudio/
+  App/YTDStudioApp.swift    app entry, tabs, ytdstudio:// links
+  Model/YouTubeService      YouTubeKit look-up, formats and sizes, oEmbed for the channel name
+  Model/Fetcher             chunked (8 MB) downloads with the right user agent; Merger joins MP4s (no re-encode)
+  Model/DownloadManager     the queue: two at a time, progress, cancel, retry, background time
+  Model/Library             saved files in Documents, thumbnails, favorites, watch progress
+  Model/PlayerModel         one AVPlayer for streams and files, fallbacks, resume, lock-screen info
+  Views/                    Home, Downloads, Library, Settings, full-screen player
+```
+
+---
+
 ## Android app
 
 `android/` is a native Kotlin + Jetpack Compose (Material 3) app with the same idea: paste a link (or
@@ -495,5 +579,6 @@ downloader or media tool: [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense)
 [FFmpeg](https://ffmpeg.org) (the downloaded build is GPL v3) are fetched onto the user's machine at
 runtime and run as separate programs. The **Android APK is different**: it bundles yt-dlp, CPython,
 FFmpeg and QuickJS through youtubedl-android (GPL-3.0), so the APK as a whole is distributed under
-GPL-3.0 terms; its source is this repository. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+GPL-3.0 terms; its source is this repository. The **iOS app** contains YouTubeKit (MIT) and no GPL code.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 Use this app only for content you have the right to download.

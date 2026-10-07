@@ -1,17 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 108dp adaptive icon canvas; artwork stays inside the 66dp safe zone. -->
+<!-- 108dp adaptive icon canvas; artwork stays inside the 66dp safe zone.
+     Same artwork as scripts/icons/render.py (iOS and desktop icons). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#E5324B"
-        android:pathData="M34,36h40a8,8 0,0 1,8 8v20a8,8 0,0 1,-8 8h-40a8,8 0,0 1,-8 -8v-20a8,8 0,0 1,8 -8z" />
+    <path android:pathData="M54,26a28,28 0,1 1,0 56a28,28 0,1 1,0 -56z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="26"
+                android:startY="26"
+                android:endX="82"
+                android:endY="82"
+                android:startColor="#FF7B5CFF"
+                android:endColor="#FFFF5470" />
+        </aapt:attr>
+    </path>
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M48,44l14,10l-14,10z" />
+        android:pathData="M52,36h4a2,2 0,0 1,2 2v13h8l-12,12l-12,-12h8v-13a2,2 0,0 1,2 -2z" />
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M51,75h6v4h6l-9,7l-9,-7h6z" />
+        android:pathData="M43.5,67h21a2.5,2.5 0,0 1,0 5h-21a2.5,2.5 0,0 1,0 -5z" />
 </vector>
