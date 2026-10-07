@@ -90,7 +90,7 @@ struct DownloadsView: View {
                 if job.status == .downloading {
                     ProgressView(value: job.progress)
                 } else if job.status.isActive {
-                    ProgressView(value: job.status == .merging ? 1 : 0)
+                    ProgressView(value: job.status == .merging ? 1.0 : 0.0)
                         .opacity(0.5)
                 }
                 Text(job.stageText)
