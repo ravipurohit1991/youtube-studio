@@ -13,6 +13,7 @@ import { imageProxyUrl } from './media-server'
 import { ffmpegLocation } from './ffmpeg'
 import { baseArgs, buildFormatSelector, cleanError, resolveYtdlp, ytdlpEnv } from './ytdlp'
 import { safeFolderName } from './library-state'
+import { SPONSORBLOCK_REMOVE } from './timeline'
 
 const PROGRESS_PREFIX = '@@P '
 const MAX_HISTORY = 300
@@ -656,7 +657,7 @@ class DownloadManager {
     if (ffmpeg) {
       const section = clipSection(original?.clipStart, original?.clipEnd)
       if (section) args.push('--download-sections', section)
-      if (original?.sponsorBlock) args.push('--sponsorblock-remove', 'sponsor,selfpromo,interaction')
+      if (original?.sponsorBlock) args.push('--sponsorblock-remove', SPONSORBLOCK_REMOVE.join(','))
       // Tags, chapters and cover art inside the file, so other players show them too.
       // (With --write-thumbnail as well, the separate image is kept for the Library.)
       if (settings.get('embedMetadata')) {

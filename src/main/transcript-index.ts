@@ -9,6 +9,7 @@ import { extractVideoId } from './downloads'
 import { cachedLibrary, infoJsonPath, scanLibrary } from './library'
 import { log, logError } from './logger'
 import { userDataDir } from './paths'
+import { fileTimeline, type Timeline } from './timeline'
 import { infoJson, resolveYtdlp } from './ytdlp'
 
 /**
@@ -52,6 +53,9 @@ interface Searchable {
 
 /** Failed reads (offline, rate limited) are retried, but not on every search or panel open. */
 const RETRY_AFTER = 6 * 3600 * 1000
+/** YouTube adds automatic captions hours after an upload: "no captions" is checked again for recent downloads. */
+const RETRY_NONE_AFTER = 24 * 3600 * 1000
+const RECENT_DOWNLOAD = 14 * 24 * 3600 * 1000
 const CONCURRENCY = 2
 
 let manifest: Manifest | null = null
@@ -62,6 +66,8 @@ let run: { canceled: boolean; done: number; queued: number; current: string | nu
 let statusTimer: NodeJS.Timeout | null = null
 const wanted = new Set<string>()
 let wantedTimer: NodeJS.Timeout | null = null
+/** "Make my library searchable" was asked for while another run was busy: start it when that one ends. */
+let pendingAll = false
 
 function dir(): string {
   const path = join(userDataDir(), 'transcripts')
@@ -103,8 +109,9 @@ export function flushTranscripts(): void {
   }
 }
 
+/** A YouTube video id (a bracketed tag like "[Remastered]" in a file name is not one). */
 function validId(id: string | null | undefined): id is string {
-  return !!id && /^[\w-]{6,}$/.test(id)
+  return !!id && /^[\w-]{11}$/.test(id)
 }
 
 function fileFor(key: string, videoId: string | null): string {
@@ -197,64 +204,85 @@ function ytdlpAvailable(): boolean {
   return resolveYtdlp().source !== 'missing'
 }
 
-/** Read one library item's transcript: stored, subtitle file, or YouTube captions. */
-async function readItem(item: LibraryItem): Promise<Transcript | null> {
+interface Plan {
+  videoId: string | null
+  /** Transcript file: one per YouTube video, or one for this file when it is not the whole video. */
+  file: string
+  /** The download's .info.json, when there is one. */
+  info: Record<string, unknown> | null
+  /** YouTube's timeline onto the file's (a clip, or sponsors cut out); null when they are the same. */
+  youtube: Timeline | null
+  /** The same for subtitle files yt-dlp wrote, which it already cut along with the video. */
+  subtitles: Timeline | null
+}
+
+function plan(item: LibraryItem): Plan {
   const videoId = validId(item.videoId) ? item.videoId : null
-  const file = fileFor(item.key, videoId)
-  const base = { title: item.title ?? item.name, videoId, kind: item.kind } as const
-  const existing = readStored(file)
-  if (existing) {
-    setEntry(item.key, { ...base, file, status: 'ok', at: Date.now() })
-    return toTranscript(existing)
+  let info: Record<string, unknown> | null = null
+  const sidecar = infoJsonPath(item.absPath)
+  if (sidecar) {
+    try {
+      info = JSON.parse(readFileSync(sidecar, 'utf8')) as Record<string, unknown>
+    } catch {
+      info = null
+    }
   }
+  const youtube = fileTimeline(info)
+  return {
+    videoId,
+    // A clip or a cut download keeps its own transcript: the shared one stays on YouTube's timeline.
+    file: youtube ? fileFor('cut:' + item.key, null) : fileFor(item.key, videoId),
+    info,
+    youtube,
+    subtitles: fileTimeline(info, false),
+  }
+}
+
+function onTimeline(lines: TranscriptLine[], timeline: Timeline | null): TranscriptLine[] {
+  if (!timeline) return lines
+  const out: TranscriptLine[] = []
+  lines.forEach((line) => {
+    const start = timeline.map(line.start)
+    if (start !== null) out.push({ start, text: line.text })
+  })
+  return out
+}
+
+function hasCaptionTracks(info: Record<string, unknown> | null): boolean {
+  const count = (value: unknown): number => (value && typeof value === 'object' ? Object.keys(value as object).length : 0)
+  return !!info && count(info.subtitles) + count(info.automatic_captions) > 0
+}
+
+/** Read one library item's transcript: stored, subtitle file, or YouTube captions. */
+async function readItem(item: LibraryItem, p: Plan): Promise<Transcript | null> {
+  const existing = readStored(p.file)
+  if (existing) return toTranscript(existing)
   const sub = localSubtitle(item)
   if (sub) {
     try {
-      const cues = parseVtt(readFileSync(sub, 'utf8'))
-      if (cues.length) {
-        const transcript: Transcript = { videoId, lang: langOf(sub), auto: false, source: 'subtitles', lines: cues }
-        writeStored(file, transcript)
-        setEntry(item.key, { ...base, file, status: 'ok', at: Date.now() })
+      const lines = onTimeline(parseVtt(readFileSync(sub, 'utf8')), p.subtitles)
+      if (lines.length) {
+        const transcript: Transcript = { videoId: p.videoId, lang: langOf(sub), auto: false, source: 'subtitles', lines }
+        writeStored(p.file, transcript)
         return transcript
       }
     } catch (err) {
       logError('transcripts.subtitle', err)
     }
   }
-  if (!videoId) {
-    setEntry(item.key, { ...base, file: null, status: 'none', at: Date.now() })
-    return null
-  }
+  if (!p.videoId) return null
   // Not "no captions": the item stays unread and is tried again once yt-dlp is there (first start).
   if (!ytdlpAvailable()) throw new Error('yt-dlp is not installed yet, so the captions cannot be read.')
-  const url = 'https://www.youtube.com/watch?v=' + videoId
-  try {
-    // The .info.json saved with the download lists the caption tracks, which saves asking YouTube twice.
-    let info: Record<string, unknown> | null = null
-    const sidecar = infoJsonPath(item.absPath)
-    if (sidecar) {
-      try {
-        const parsed = JSON.parse(readFileSync(sidecar, 'utf8')) as Record<string, unknown>
-        if (parsed && (parsed.subtitles || parsed.automatic_captions)) info = parsed
-      } catch {
-        info = null
-      }
-    }
-    if (!info) info = await infoJson(url)
-    const track = await fetchCaptions({ ...info, id: videoId }, url)
-    if (!track) {
-      setEntry(item.key, { ...base, file: null, status: 'none', at: Date.now() })
-      return null
-    }
-    const transcript = trackToTranscript(track, 'youtube')
-    writeStored(file, transcript)
-    setEntry(item.key, { ...base, file, status: 'ok', at: Date.now() })
-    return transcript
-  } catch (err) {
-    logError('transcripts.fetch', err)
-    setEntry(item.key, { ...base, file: null, status: 'error', at: Date.now() })
-    throw err
-  }
+  const url = 'https://www.youtube.com/watch?v=' + p.videoId
+  // The .info.json saved with the download lists the caption tracks (when there were any at download time),
+  // which saves asking YouTube for the video page.
+  const info = hasCaptionTracks(p.info) ? (p.info as Record<string, unknown>) : await infoJson(url)
+  const track = await fetchCaptions({ ...info, id: p.videoId }, url)
+  if (!track) return null
+  const transcript = { ...trackToTranscript(track, 'youtube'), lines: onTimeline(track.cues, p.youtube) }
+  if (!transcript.lines.length) return null
+  writeStored(p.file, transcript)
+  return transcript
 }
 
 function once(id: string, work: () => Promise<Transcript | null>): Promise<Transcript | null> {
@@ -266,30 +294,32 @@ function once(id: string, work: () => Promise<Transcript | null>): Promise<Trans
 }
 
 /**
- * readItem, shared by items of the same video: the MP4 and MP3 of one video read the captions once, and
- * both are recorded.
+ * readItem, shared by items with the same transcript file: the MP4 and MP3 of one video read the captions
+ * once, and both are recorded. A failure is recorded as such (tried again later), never as "no captions".
  */
 async function readShared(item: LibraryItem): Promise<Transcript | null> {
-  const videoId = validId(item.videoId) ? item.videoId : null
-  const result = await once(videoId ?? item.key, function () { return readItem(item) })
-  const file = fileFor(item.key, videoId)
-  setEntry(item.key, {
-    file: result ? file : null,
-    status: result ? 'ok' : 'none',
-    at: Date.now(),
-    title: item.title ?? item.name,
-    videoId,
-    kind: item.kind,
-  })
-  return result
+  const p = plan(item)
+  const base = { title: item.title ?? item.name, videoId: p.videoId, kind: item.kind } as const
+  try {
+    const result = await once(p.file, function () { return readItem(item, p) })
+    setEntry(item.key, { ...base, file: result ? p.file : null, status: result ? 'ok' : 'none', at: Date.now() })
+    return result
+  } catch (err) {
+    logError('transcripts.fetch', err)
+    setEntry(item.key, { ...base, file: null, status: 'error', at: Date.now() })
+    throw err
+  }
 }
 
-function needsWork(item: LibraryItem): boolean {
+/** retryErrors: a failed read is tried again now (asked for by hand) instead of after RETRY_AFTER. */
+function needsWork(item: LibraryItem, retryErrors = false): boolean {
   const entry = data().items[item.key]
   if (!entry) return true
-  if (entry.status === 'error') return Date.now() - entry.at > RETRY_AFTER
-  if (entry.status === 'ok') return !entry.file || !existsSync(join(dir(), entry.file))
-  return false
+  if (entry.status === 'error') return retryErrors || Date.now() - entry.at > RETRY_AFTER
+  if (entry.status === 'none') {
+    return !!entry.videoId && Date.now() - entry.at > RETRY_NONE_AFTER && Date.now() - item.mtime < RECENT_DOWNLOAD
+  }
+  return !entry.file || !existsSync(join(dir(), entry.file))
 }
 
 async function library(): Promise<LibraryItem[]> {
@@ -331,10 +361,16 @@ function announce(now = false): void {
   if (!statusTimer) statusTimer = setTimeout(send, 300)
 }
 
-/** Read the captions of every item that has none yet, two at a time. Returns at once; progress is broadcast. */
-export async function startIndexing(only?: (item: LibraryItem) => boolean): Promise<TranscriptIndexStatus> {
-  if (run) return transcriptStatus()
-  const items = (await scanLibrary()).filter(function (item) { return needsWork(item) && (!only || only(item)) })
+/**
+ * Read the captions of every item that has none yet, two at a time. Returns at once; progress is broadcast.
+ * only: just these items (new downloads). retryErrors: failed reads are tried again right away.
+ */
+export async function startIndexing(only?: (item: LibraryItem) => boolean, retryErrors = false): Promise<TranscriptIndexStatus> {
+  if (run) {
+    if (!only) pendingAll = true
+    return transcriptStatus()
+  }
+  const items = (await scanLibrary()).filter(function (item) { return needsWork(item, retryErrors) && (!only || only(item)) })
   if (!items.length) return transcriptStatus()
   const state = { canceled: false, done: 0, queued: items.length, current: null as string | null }
   run = state
@@ -362,11 +398,16 @@ export async function startIndexing(only?: (item: LibraryItem) => boolean): Prom
     run = null
     log('transcripts: indexed', state.done, 'of', state.queued, state.canceled ? '(stopped)' : '')
     announce(true)
+    if (pendingAll) {
+      pendingAll = false
+      void startIndexing(undefined, true).catch(function (err) { logError('transcripts.pending', err) })
+    }
   })
   return transcriptStatus()
 }
 
 export async function cancelIndexing(): Promise<TranscriptIndexStatus> {
+  pendingAll = false
   if (run) run.canceled = true
   return transcriptStatus()
 }
@@ -400,7 +441,15 @@ export async function transcriptFor(key: string): Promise<Transcript | null> {
   if (!item) item = (await scanLibrary()).find(function (i) { return i.key === key })
   if (!item) throw new Error('That file is no longer in the library.')
   // Checked before and nothing there. (A failed check is retried: opening the panel asks for it.)
-  if (entry?.status === 'none') return null
+  if (entry?.status === 'none' && !needsWork(item)) {
+    // The captions may have arrived since through the Stream tab or an AI summary of the same video.
+    const p = plan(item)
+    const stored = readStored(p.file)
+    if (!stored) return null
+    setEntry(key, { ...entry, file: p.file, status: 'ok', at: Date.now() })
+    announce()
+    return toTranscript(stored)
+  }
   const result = await readShared(item)
   announce()
   return result
@@ -458,7 +507,7 @@ export function parseQuery(query: string): { phrases: string[]; words: string[] 
   })
   const words = rest
     .split(/\s+/)
-    .map(function (w) { return w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '') })
+    .map(function (w) { return w.replace(/^[^\p{L}\p{M}\p{N}]+|[^\p{L}\p{M}\p{N}]+$/gu, '') })
     .filter(function (w) { return w.length > 0 })
   return { phrases, words: Array.from(new Set(words)) }
 }
@@ -467,10 +516,18 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** One regex per term: it must start a word ("run" finds "running", not "rerun"). */
+/** Scripts written without spaces between words: a term can start anywhere in them. */
+const NO_SPACES = /^[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Thai}\p{sc=Lao}\p{sc=Khmer}\p{sc=Myanmar}]/u
+
+/**
+ * One regex per term: it must start a word ("run" finds "running", not "rerun"). Vowel signs and other
+ * combining marks are part of a word (Hindi, Tamil...). Chinese, Japanese and Thai have no spaces, so
+ * there a term may start anywhere.
+ */
 function termMatchers(query: { phrases: string[]; words: string[] }): RegExp[] {
   return [...query.phrases, ...query.words].map(function (term) {
-    return new RegExp('(^|[^\\p{L}\\p{N}])' + escapeRegex(term).replace(/\s+/g, '\\s+'), 'u')
+    const start = NO_SPACES.test(term) ? '' : '(^|[^\\p{L}\\p{M}\\p{N}])'
+    return new RegExp(start + escapeRegex(term).replace(/\s+/g, '\\s+'), 'u')
   })
 }
 

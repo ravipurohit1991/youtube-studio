@@ -8,22 +8,34 @@ export default function MomentRow({
   moment,
   onOpen,
   autoFocus,
+  onAutoFocused,
   active,
 }: {
   moment: Moment
   onOpen: (moment: Moment) => void
+  /** Focus the note once (a moment just saved); onAutoFocused then clears it. */
   autoFocus?: boolean
+  onAutoFocused?: () => void
   active?: boolean
 }): ReactNode {
   const [note, setNote] = useState(moment.note)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const discard = useRef(false)
 
   useEffect(() => setNote(moment.note), [moment.note])
   useEffect(() => {
-    if (autoFocus) inputRef.current?.focus()
+    if (!autoFocus) return
+    inputRef.current?.focus()
+    onAutoFocused?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFocus])
 
   const save = (): void => {
+    // Escape leaves the note as it was (the blur that follows must not save the edit).
+    if (discard.current) {
+      discard.current = false
+      return
+    }
     if (note !== moment.note) void window.api.momentUpdate(moment.id, note)
   }
 
@@ -42,13 +54,12 @@ export default function MomentRow({
         onBlur={save}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
-            save()
             event.currentTarget.blur()
           } else if (event.key === 'Escape') {
+            discard.current = true
             setNote(moment.note)
             event.currentTarget.blur()
           }
-          event.stopPropagation()
         }}
       />
       <span className="moment-age" title={new Date(moment.createdAt).toLocaleString()}>{timeAgo(moment.createdAt)}</span>

@@ -92,12 +92,21 @@ export function removeMoment(id: string): Moment[] {
   return commit(data().filter((m) => m.id !== id))
 }
 
-/** Backups: moments are added by id, nothing here is lost. */
+/** Backups: moments are added by id, up to the limit; nothing already here is lost or pushed out. */
 export function mergeMoments(incoming: unknown): number {
   if (!Array.isArray(incoming)) return 0
-  const known = new Set(data().map((m) => m.id))
-  const added = incoming.map((m) => clean(m as Partial<Moment>)).filter((m): m is Moment => !!m && !known.has(m.id))
-  if (added.length) commit([...data(), ...added])
+  const current = data()
+  const known = new Set(current.map((m) => m.id))
+  const room = Math.max(0, MAX_MOMENTS - current.length)
+  const added: Moment[] = []
+  for (const raw of incoming) {
+    if (added.length >= room) break
+    const moment = clean(raw as Partial<Moment>)
+    if (!moment || known.has(moment.id)) continue
+    known.add(moment.id)
+    added.push(moment)
+  }
+  if (added.length) commit([...current, ...added])
   return added.length
 }
 

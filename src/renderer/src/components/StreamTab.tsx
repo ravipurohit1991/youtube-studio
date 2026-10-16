@@ -491,7 +491,7 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
               videoMoments.length ? (
                 <div className="moment-list">
                   {videoMoments.map((m) => (
-                    <MomentRow key={m.id} moment={m} onOpen={(x) => seek(x.at)} autoFocus={focusMoment === m.id} active={Math.abs(time - m.at) < 2} />
+                    <MomentRow key={m.id} moment={m} onOpen={(x) => seek(x.at)} autoFocus={focusMoment === m.id} onAutoFocused={() => setFocusMoment(null)} active={Math.abs(time - m.at) < 2} />
                   ))}
                 </div>
               ) : (

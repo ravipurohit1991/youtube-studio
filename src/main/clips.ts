@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import type { ClipRequest, SavedFile, SnapshotRequest } from '@shared/types'
 import { ffmpegLocation } from './ffmpeg'
@@ -36,14 +36,25 @@ function stamp(seconds: number): string {
   return (h ? h + 'h' : '') + (h || m ? m + 'm' : '') + (s < 10 && (h || m) ? '0' : '') + s + 's'
 }
 
-/** A free file name in the downloads folder's subfolder: "Title (1m02s-1m30s).mp4", "... (2).mp4"... */
+/**
+ * A free file name in the downloads folder's subfolder: "Title (1m02s-1m30s).mp4", "... (2).mp4"...
+ * The name is reserved by creating its ".part" file, so two exports at once never share one.
+ */
 function target(folder: string, title: string, suffix: string, ext: string): string {
   const dir = join(resolve(settings.get('downloadsDir')), folder)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   const name = (safeFolderName(title) ?? 'clip').slice(0, 70)
-  let candidate = join(dir, name + ' (' + suffix + ').' + ext)
-  for (let n = 2; existsSync(candidate); n += 1) candidate = join(dir, name + ' (' + suffix + ') ' + n + '.' + ext)
-  return candidate
+  for (let n = 1; n < 1000; n += 1) {
+    const candidate = join(dir, name + ' (' + suffix + ')' + (n > 1 ? ' ' + n : '') + '.' + ext)
+    if (existsSync(candidate)) continue
+    try {
+      closeSync(openSync(candidate + '.part', 'wx'))
+      return candidate
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+  }
+  throw new Error('Could not find a free file name in ' + folder + '.')
 }
 
 /**

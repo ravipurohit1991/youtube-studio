@@ -56,6 +56,14 @@ copyFileSync(join(media, 'muxed.mp4'), join(dl, 'Song [xyzxyzxyz12].mp4'))
 copyFileSync(join(media, 'audio.m4a'), join(dl, 'Song [xyzxyzxyz12].mp3'))
 writeFileSync(join(dl, 'Song [xyzxyzxyz12].info.json'), JSON.stringify({ id: 'xyzxyzxyz12', title: 'Song Title', uploader: 'Band' }))
 writeFileSync(join(dl, 'Song [xyzxyzxyz12].en.srt'), '1\n00:00:01,000 --> 00:00:03,500\nHello subtitles\n')
+// Downloaded with a sponsor (2-6 s) cut out: yt-dlp's .info.json records the cut, captions and chapters follow it.
+copyFileSync(join(media, 'muxed.mp4'), join(dl, 'Cut [cutcutcut12].mp4'))
+writeFileSync(join(dl, 'Cut [cutcutcut12].info.json'), JSON.stringify({
+  id: 'cutcutcut12', title: 'Cut Video', uploader: 'Tester', duration: 24,
+  automatic_captions: { 'en-orig': [{ ext: 'vtt' }] }, subtitles: {}, language: 'en',
+  chapters: [{ start_time: 0, title: 'Intro' }, { start_time: 4, title: 'Inside the cut' }, { start_time: 10, title: 'Middle' }],
+  sponsorblock_chapters: [{ start_time: 2, end_time: 6, category: 'sponsor', type: 'skip' }],
+}))
 copyFileSync(join(media, 'video.mp4'), join(dl, 'Broken [qqqqqqqqq12].f137.mp4'))
 copyFileSync(join(media, 'audio.m4a'), join(dl, 'Broken [qqqqqqqqq12].f140.m4a'))
 copyFileSync(join(media, 'video.mp4'), join(dl, 'Work [wwwwwwwww12].mp4.part'))
@@ -544,10 +552,19 @@ try {
   await page.waitForSelector('[data-tab="moments"] .hit-card', { timeout: 10000 })
   const hitTitles = await page.$$eval('[data-tab="moments"] .hit-card .lib-name', (els) => els.map((e) => e.textContent))
   console.log('  "halfway" said in:', hitTitles.join(' | '))
-  // Four videos say it (Test Clip, Second, Third, and the unmerged leftover); Test Clip has three files
-  // (MP4, M4A and the playlist copy) but one transcript, so it is listed once.
-  check('search finds a spoken word, once per video', hitTitles.length === 4 && hitTitles.filter((t) => t === 'Test Clip').length === 1)
-  check('the hit shows the line with the word marked', (await page.locator('[data-tab="moments"] .hit-card mark:has-text("halfway")').count()) >= 4)
+  // Five videos say it (Test Clip, Second, Third, the cut one and the unmerged leftover); Test Clip has three
+  // files (MP4, M4A and the playlist copy) but one transcript, so it is listed once.
+  check('search finds a spoken word, once per video', hitTitles.length === 5 && hitTitles.filter((t) => t === 'Test Clip').length === 1)
+  check('the hit shows the line with the word marked', (await page.locator('[data-tab="moments"] .hit-card mark:has-text("halfway")').count()) >= 5)
+  // The caption said at 0:12 on YouTube is at 0:08 in the file with 2-6 s cut out; the one inside the cut is gone.
+  const cutHit = await page.evaluate(async () => {
+    const found = (await window.api.transcriptSearch('halfway', 10)).data.matches.find((m) => m.title === 'Cut Video')
+    const gone = (await window.api.transcriptSearch('"the tone starts"', 10)).data.matches.some((m) => m.title === 'Cut Video')
+    const item = (await window.api.scanLibrary()).data.find((i) => i.title === 'Cut Video')
+    return { at: found ? found.hits[0].start : null, gone: !gone, chapters: item ? item.chapters : null }
+  })
+  check('captions of a download with a sponsor cut out follow the file', cutHit.at === 8 && cutHit.gone, JSON.stringify(cutHit.at))
+  check('chapters follow the cut too', JSON.stringify(cutHit.chapters) === JSON.stringify([{ start: 0, title: 'Intro' }, { start: 2, title: 'Inside the cut' }, { start: 6, title: 'Middle' }]), JSON.stringify(cutHit.chapters))
   await page.fill('[data-tab="moments"] .link-bar input', '"hello subtitles"')
   await page.waitForFunction(() => [...document.querySelectorAll('[data-tab="moments"] .hit-card .lib-name')].map((e) => e.textContent).join() === 'Song Title', null, { timeout: 10000 }).catch(() => undefined)
   const phraseHits = await page.$$eval('[data-tab="moments"] .hit-card .lib-name', (els) => els.map((e) => e.textContent))

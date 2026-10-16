@@ -141,6 +141,8 @@ export default function PlayerOverlay({
   const [flash, setFlash] = useState<string | null>(null)
   const [loop, setLoop] = useState<{ a: number | null; b: number | null }>({ a: null, b: null })
   const [busy, setBusy] = useState<string | null>(null)
+  const busyRef = useRef<string | null>(null)
+  busyRef.current = busy
   const [savedTab, setSavedTab] = usePref<SideTab>('player.side', 'transcript')
   const [focusMoment, setFocusMoment] = useState<string | null>(null)
   const [transcripts, setTranscripts] = useState<Record<string, { loading: boolean; error: string | null; data: Transcript | null }>>({})
@@ -267,6 +269,16 @@ export default function PlayerOverlay({
     mediaEl.addEventListener('timeupdate', onTime)
     return () => mediaEl.removeEventListener('timeupdate', onTime)
   }, [mediaEl])
+
+  // Opening the item that is already playing at another second (a search hit, a moment) only seeks.
+  useEffect(() => {
+    const start = queue.startAt
+    const media = mediaRef.current
+    if (!start || !item || start.key !== item.key || usedStart.current === start.nonce || !media || media.readyState < 1) return
+    usedStart.current = start.nonce
+    media.currentTime = start.at
+    void media.play().catch(() => undefined)
+  }, [queue.startAt, item, mediaEl])
 
   const onLoaded = (): void => {
     const media = mediaRef.current
@@ -397,7 +409,7 @@ export default function PlayerOverlay({
 
   const takeSnapshot = useCallback(async () => {
     const media = mediaRef.current
-    if (!media || !item || item.kind !== 'video') return
+    if (!media || !item || item.kind !== 'video' || busyRef.current) return
     if (!ffmpegOk) {
       pushToast('Snapshots need ffmpeg. Install it from the banner or Settings > Tools.', 'info')
       return
@@ -415,7 +427,7 @@ export default function PlayerOverlay({
   }, [item, ffmpegOk, pushToast])
 
   const exportClip = async (format: ClipFormat): Promise<void> => {
-    if (!item || loop.a === null || loop.b === null) return
+    if (!item || loop.a === null || loop.b === null || busyRef.current) return
     setBusy('clip')
     pushToast('Saving the clip…', 'info', { duration: 2500 })
     try {
@@ -448,7 +460,10 @@ export default function PlayerOverlay({
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return
-      if (event.ctrlKey || event.metaKey || event.altKey) return
+      // Many keyboard layouts type [ ] and \ with AltGr (Ctrl+Alt on Windows) or Option on a Mac.
+      const loopKey = event.key === '[' || event.key === ']' || event.key === '\\'
+      const typedWithAlt = loopKey && (event.getModifierState('AltGraph') || (event.altKey && !event.ctrlKey))
+      if (event.metaKey || ((event.ctrlKey || event.altKey) && !typedWithAlt)) return
       const media = mediaRef.current
       const onMedia = target instanceof HTMLMediaElement
       const key = event.key.toLowerCase()
@@ -775,7 +790,7 @@ export default function PlayerOverlay({
                 {itemMoments.length ? (
                   <div className="moment-list">
                     {itemMoments.map((m) => (
-                      <MomentRow key={m.id} moment={m} onOpen={(x) => seek(x.at)} autoFocus={focusMoment === m.id} active={Math.abs(time - m.at) < 2} />
+                      <MomentRow key={m.id} moment={m} onOpen={(x) => seek(x.at)} autoFocus={focusMoment === m.id} onAutoFocused={() => setFocusMoment(null)} active={Math.abs(time - m.at) < 2} />
                     ))}
                   </div>
                 ) : (

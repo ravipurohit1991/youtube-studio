@@ -25,17 +25,40 @@ const STOPWORDS = new Set(
     .split(' '),
 )
 
-/** Lower case, accents folded, without stop words; plurals and -ing/-ed folded so "routers" finds "router". */
+/** Scripts written without spaces between words (Chinese, Japanese, Thai...). */
+const NO_SPACES = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Thai}\p{sc=Lao}\p{sc=Khmer}\p{sc=Myanmar}]+/gu
+
+/**
+ * Search terms of a text: lower case, accents folded, without stop words; English plurals and -ing/-ed
+ * folded so "routers" finds "router". Vowel signs stay part of a word (Hindi, Tamil...), and text without
+ * spaces becomes overlapping pairs of characters, which is how such text is usually searched.
+ */
 export function terms(text: string): string[] {
-  return (fold(text).match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => w.length > 1 && !STOPWORDS.has(w)).map(stem)
+  const out: string[] = []
+  ;(fold(text).match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).forEach((token) => {
+    const rest = token.replace(NO_SPACES, (run) => {
+      const chars = Array.from(run)
+      if (chars.length === 1) out.push(run)
+      for (let i = 0; i + 1 < chars.length; i += 1) out.push(chars[i] + chars[i + 1])
+      return ' '
+    })
+    rest.split(' ').forEach((word) => {
+      if (word.length > 1 && !STOPWORDS.has(word)) out.push(stem(word))
+    })
+  })
+  return out
 }
 
-function stem(word: string): string {
-  if (word.length > 5 && word.endsWith('ing')) return word.slice(0, -3)
-  if (word.length > 4 && word.endsWith('ed')) return word.slice(0, -2)
-  if (word.length > 4 && word.endsWith('es')) return word.slice(0, -2)
-  if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1)
-  return word
+/** A light English stemmer; update, updates, updated and updating all become "updat". */
+export function stem(word: string): string {
+  if (!/^[a-z0-9]+$/.test(word)) return word
+  let w = word
+  if (w.length > 5 && w.endsWith('ing')) w = w.slice(0, -3)
+  else if (w.length > 4 && w.endsWith('ed') && !w.endsWith('eed')) w = w.slice(0, -2)
+  else if (w.length > 4 && /(s|x|z|ch|sh)es$/.test(w)) w = w.slice(0, -2)
+  else if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) w = w.slice(0, -1)
+  if (w.length > 4 && w.endsWith('e')) w = w.slice(0, -1)
+  return w
 }
 
 interface Passage {

@@ -221,7 +221,12 @@ download ──► captions read once ──► transcripts/  (on this computer)
 
 - **Make my library searchable** reads what you already have (two at a time, in the background; it stops by itself
   when you are offline). New downloads are read automatically (Settings > General > *Make new downloads searchable*).
-  The `.info.json` saved with a download lists its caption tracks, so usually only the captions themselves are fetched.
+  The `.info.json` saved with a download already lists its caption tracks, so YouTube is asked once instead of twice.
+  YouTube adds automatic captions some hours after an upload, so a recent download without captions is checked
+  again a day later.
+- Clips and downloads with sponsors cut out have a shorter timeline than the video on YouTube: their captions and
+  chapters are moved onto the file's own timeline (from the segments yt-dlp records in the `.info.json`), so every
+  timestamp still lands on the right moment.
 - Words match the start of words ("run" finds "running"), accents and case are ignored, and "quoted phrases" must
   appear together (also across two caption lines). An MP4 and an MP3 of the same video share one transcript.
 - **Saved moments** (press **B**) keep the time, the title and your note. A moment of a downloaded file opens in the
@@ -416,7 +421,7 @@ node scripts/smoke.mjs
 | I paused a download and closed the app | It is still there as *paused*; **Resume** continues from the partial file. |
 | The copied-link prompt gets in the way | Settings > General > **Offer copied YouTube links** turns it off. |
 | Moments: a video is "without captions" | Neither YouTube nor a subtitle file has captions for it, so there is nothing to search. Turn on Settings > Downloads > **Download subtitles** for future downloads that have them. |
-| Moments: "not read yet" stays after indexing | Reading stopped (offline, or yt-dlp not installed yet). Click **Make my library searchable** again later; failed items are retried. |
+| Moments: "not read yet" stays after indexing | Reading stopped (offline, or yt-dlp not installed yet). Click **Make my library searchable** again once you are back online; failed items are tried again right away. |
 | Save clip / Snapshot does nothing | Both need ffmpeg (**Install ffmpeg**). Clips land in *Clips*, snapshots in *Snapshots*, inside your downloads folder. |
 | A sponsor is skipped in the wrong place | The file was cut or is a clip, so its timeline differs: the player only skips when the file is as long as the video. Turn it off in Settings > General > **Skip sponsors while watching**. |
 

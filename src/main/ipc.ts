@@ -346,7 +346,8 @@ export function registerIpc(): void {
   })
 
   handle(IPC.transcriptStatus, (): Promise<TranscriptIndexStatus> => transcriptStatus())
-  handle(IPC.transcriptIndex, (): Promise<TranscriptIndexStatus> => startIndexing())
+  // Asked for by hand: reads that failed earlier are tried again right away.
+  handle(IPC.transcriptIndex, (): Promise<TranscriptIndexStatus> => startIndexing(undefined, true))
   handle(IPC.transcriptCancel, (): Promise<TranscriptIndexStatus> => cancelIndexing())
   handle(IPC.transcriptGet, (key: string): Promise<Transcript | null> => {
     if (!key) throw new Error('Nothing to read.')

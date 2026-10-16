@@ -882,7 +882,7 @@ export default function App(): ReactNode {
             draft={streamDraft}
             aiReady={!!aiStatus?.ready}
             onOpenAiSettings={openAiSettings}
-            active={tab === 'stream' && !playQueue && !paletteOpen}
+            active={tab === 'stream' && !playQueue && !paletteOpen && !smartOpen && !addKeys}
             moments={moments}
           />
         </TabPanel>
