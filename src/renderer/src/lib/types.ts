@@ -52,4 +52,6 @@ export interface PlayQueue {
   pos: number
   shuffle: boolean
   repeat: RepeatMode
+  /** Open this item at this second (a saved moment, a search hit) instead of where it was left off. */
+  startAt?: { key: string; at: number; nonce: number } | null
 }

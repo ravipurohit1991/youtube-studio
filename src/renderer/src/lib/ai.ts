@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { InsightSource } from '@shared/types'
+import type { InsightSource, LibrarySource } from '@shared/types'
 
 export function newRequestId(prefix: string): string {
   return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)
@@ -11,9 +11,11 @@ export interface AiLive {
   text: string
   thinking: boolean
   source: InsightSource | null
+  /** Ask your library: the passages the answer is based on. */
+  sources: LibrarySource[] | null
 }
 
-const IDLE: AiLive = { stage: null, text: '', thinking: false, source: null }
+const IDLE: AiLive = { stage: null, text: '', thinking: false, source: null, sources: null }
 
 /** Live progress (stage, streamed text) of the AI request with this id; resets when the id changes. */
 export function useAiLive(requestId: string | null): AiLive {
@@ -28,6 +30,7 @@ export function useAiLive(requestId: string | null): AiLive {
         text: progress.delta ? prev.text + progress.delta : prev.text,
         thinking: progress.delta ? false : progress.thinking ?? prev.thinking,
         source: progress.source ?? prev.source,
+        sources: progress.sources ?? prev.sources,
       }))
     })
   }, [requestId])

@@ -10,6 +10,7 @@
 // Needs python3 and ffmpeg on PATH (ffmpeg makes the sample media and is handed to the app).
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, appendFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -55,6 +56,14 @@ copyFileSync(join(media, 'muxed.mp4'), join(dl, 'Song [xyzxyzxyz12].mp4'))
 copyFileSync(join(media, 'audio.m4a'), join(dl, 'Song [xyzxyzxyz12].mp3'))
 writeFileSync(join(dl, 'Song [xyzxyzxyz12].info.json'), JSON.stringify({ id: 'xyzxyzxyz12', title: 'Song Title', uploader: 'Band' }))
 writeFileSync(join(dl, 'Song [xyzxyzxyz12].en.srt'), '1\n00:00:01,000 --> 00:00:03,500\nHello subtitles\n')
+// Downloaded with a sponsor (2-6 s) cut out: yt-dlp's .info.json records the cut, captions and chapters follow it.
+copyFileSync(join(media, 'muxed.mp4'), join(dl, 'Cut [cutcutcut12].mp4'))
+writeFileSync(join(dl, 'Cut [cutcutcut12].info.json'), JSON.stringify({
+  id: 'cutcutcut12', title: 'Cut Video', uploader: 'Tester', duration: 24,
+  automatic_captions: { 'en-orig': [{ ext: 'vtt' }] }, subtitles: {}, language: 'en',
+  chapters: [{ start_time: 0, title: 'Intro' }, { start_time: 4, title: 'Inside the cut' }, { start_time: 10, title: 'Middle' }],
+  sponsorblock_chapters: [{ start_time: 2, end_time: 6, category: 'sponsor', type: 'skip' }],
+}))
 copyFileSync(join(media, 'video.mp4'), join(dl, 'Broken [qqqqqqqqq12].f137.mp4'))
 copyFileSync(join(media, 'audio.m4a'), join(dl, 'Broken [qqqqqqqqq12].f140.m4a'))
 copyFileSync(join(media, 'video.mp4'), join(dl, 'Work [wwwwwwwww12].mp4.part'))
@@ -112,10 +121,25 @@ async function streamChat(res, text, thinking = false) {
   }
   res.end(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }) + '\n')
 }
+// The same server stands in for SponsorBlock: one sponsor read from 5 to 8 s in the test video, served
+// by hash prefix like the real API (with another video in the same bucket that must be ignored).
+const sponsorCalls = []
 const ollama = createServer((req, res) => {
   let raw = ''
   req.on('data', (c) => (raw += c))
   req.on('end', async () => {
+    if (req.url.startsWith('/api/skipSegments/')) {
+      sponsorCalls.push(req.url)
+      const prefix = req.url.split('/')[3].split('?')[0]
+      const id = 'abc123def45'
+      const hash = createHash('sha256').update(id).digest('hex')
+      res.writeHead(hash.startsWith(prefix) ? 200 : 404, { 'Content-Type': 'application/json' })
+      res.end(hash.startsWith(prefix) ? JSON.stringify([
+        { videoID: 'zzzzzzzzzzz', segments: [{ segment: [1, 3], category: 'sponsor', actionType: 'skip' }] },
+        { videoID: id, hash, segments: [{ segment: [5, 8], category: 'sponsor', actionType: 'skip' }] },
+      ]) : '[]')
+      return
+    }
     const body = raw ? JSON.parse(raw) : null
     aiCalls.push({ path: req.url, auth: req.headers.authorization || null, body })
     if (req.url === '/api/tags') {
@@ -140,6 +164,9 @@ const ollama = createServer((req, res) => {
       const picks = Array.from({ length: n }, (_, k) => ({ i: n - k, score: 95 - k * 4, why: 'Pick ' + (k + 1) + ' because it fits.' })).filter((p) => p.score >= 40)
       return streamChat(res, '```json\n' + JSON.stringify({ picks }) + '\n```')
     }
+    if (props.keywords) {
+      return streamChat(res, JSON.stringify({ keywords: ['halfway', 'middle', 'tone'] }))
+    }
     if (props.groups) {
       return streamChat(res, JSON.stringify({ groups: [{ name: 'Test Mix', description: 'All the test clips', items: [1, 2, 3] }, { name: 'More Clips', description: 'The rest', items: [4, 5, 6] }] }))
     }
@@ -147,13 +174,16 @@ const ollama = createServer((req, res) => {
       return streamChat(res, '## TL;DW\nA **test clip** with a tone.\n\n## Key moments\n- [00:03] The tone starts\n- [00:12] Halfway point\n\n## Worth watching?\nOnly for tests.', true)
     }
     if (/answer questions about one YouTube video/.test(system)) return streamChat(res, 'It says hello at [00:02].')
+    if (/passages from the user's own saved videos/.test(system)) {
+      return streamChat(res, 'It comes up **halfway** through [S1 00:12], right after the tone starts [S1 00:03].', true)
+    }
     return streamChat(res, 'YTD Studio is connected.')
   })
 })
 await new Promise((resolve) => ollama.listen(0, '127.0.0.1', resolve))
 const ollamaHost = 'http://127.0.0.1:' + ollama.address().port
 
-const env = { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config, YTD_USER_DATA: join(config, 'YTD Studio'), FAKE_MEDIA_BASE: mediaBase }
+const env = { ...process.env, XDG_CONFIG_HOME: config, APPDATA: config, YTD_USER_DATA: join(config, 'YTD Studio'), FAKE_MEDIA_BASE: mediaBase, YTD_SPONSORBLOCK_URL: ollamaHost }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.OLLAMA_API_KEY
 const app = await _electron.launch({ executablePath: electronPath, args: ['--no-sandbox', REPO], cwd: REPO, env })
@@ -503,6 +533,161 @@ try {
     return { lang: withSubs.subtitles[0].lang, text: await (await fetch(withSubs.subtitles[0].url)).text() }
   })
   check('SRT subtitles are served as WebVTT', !!vtt && vtt.lang === 'en' && vtt.text.startsWith('WEBVTT') && vtt.text.includes('00:00:01.000 --> 00:00:03.500'))
+
+
+  // ---- v2.1: search inside videos, the player's transcript and moments, clips, SponsorBlock, ask your library
+  const userData = ['YTD Studio', 'ytd-studio'].map((n) => join(config, n)).find((d) => { try { readdirSync(d); return true } catch { return false } })
+  await page.click('button.nav-item:has-text("Moments")')
+  await page.waitForSelector('[data-tab="moments"] .index-row', { timeout: 5000 })
+  const status = () => page.evaluate(async () => (await window.api.transcriptStatus()).data)
+  if ((await status()).pending > 0) {
+    await page.waitForSelector('[data-tab="moments"] button:has-text("Make my library searchable")', { timeout: 10000 })
+    await page.click('[data-tab="moments"] button:has-text("Make my library searchable")')
+  }
+  const indexed = await waitFor(async () => { const st = await status(); return !st.running && st.pending === 0 }, 60000)
+  const finalStatus = await status()
+  console.log('  transcripts:', JSON.stringify(finalStatus))
+  check('the library is read for captions (subtitle files and YouTube captions)', indexed && finalStatus.indexed >= 5)
+  await page.fill('[data-tab="moments"] .link-bar input', 'halfway')
+  await page.waitForSelector('[data-tab="moments"] .hit-card', { timeout: 10000 })
+  const hitTitles = await page.$$eval('[data-tab="moments"] .hit-card .lib-name', (els) => els.map((e) => e.textContent))
+  console.log('  "halfway" said in:', hitTitles.join(' | '))
+  // Five videos say it (Test Clip, Second, Third, the cut one and the unmerged leftover); Test Clip has three
+  // files (MP4, M4A and the playlist copy) but one transcript, so it is listed once.
+  check('search finds a spoken word, once per video', hitTitles.length === 5 && hitTitles.filter((t) => t === 'Test Clip').length === 1)
+  check('the hit shows the line with the word marked', (await page.locator('[data-tab="moments"] .hit-card mark:has-text("halfway")').count()) >= 5)
+  // The caption said at 0:12 on YouTube is at 0:08 in the file with 2-6 s cut out; the one inside the cut is gone.
+  const cutHit = await page.evaluate(async () => {
+    const found = (await window.api.transcriptSearch('halfway', 10)).data.matches.find((m) => m.title === 'Cut Video')
+    const gone = (await window.api.transcriptSearch('"the tone starts"', 10)).data.matches.some((m) => m.title === 'Cut Video')
+    const item = (await window.api.scanLibrary()).data.find((i) => i.title === 'Cut Video')
+    return { at: found ? found.hits[0].start : null, gone: !gone, chapters: item ? item.chapters : null }
+  })
+  check('captions of a download with a sponsor cut out follow the file', cutHit.at === 8 && cutHit.gone, JSON.stringify(cutHit.at))
+  check('chapters follow the cut too', JSON.stringify(cutHit.chapters) === JSON.stringify([{ start: 0, title: 'Intro' }, { start: 2, title: 'Inside the cut' }, { start: 6, title: 'Middle' }]), JSON.stringify(cutHit.chapters))
+  await page.fill('[data-tab="moments"] .link-bar input', '"hello subtitles"')
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-tab="moments"] .hit-card .lib-name')].map((e) => e.textContent).join() === 'Song Title', null, { timeout: 10000 }).catch(() => undefined)
+  const phraseHits = await page.$$eval('[data-tab="moments"] .hit-card .lib-name', (els) => els.map((e) => e.textContent))
+  check('an exact phrase is found in a subtitle file next to a download', phraseHits.length === 1 && phraseHits[0] === 'Song Title')
+
+  // A hit opens the player right at that moment, with the transcript following along.
+  await page.fill('[data-tab="moments"] .link-bar input', 'halfway')
+  await page.waitForSelector('[data-tab="moments"] .hit-card:has(.lib-name:text-is("Test Clip")) .tline', { timeout: 10000 })
+  await page.click('[data-tab="moments"] .hit-card:has(.lib-name:text-is("Test Clip")) .tline')
+  await page.waitForSelector('.overlay video', { timeout: 10000 })
+  const openedAt = await page.evaluate(async () => {
+    const v = document.querySelector('.overlay video')
+    v.muted = true
+    const t0 = performance.now()
+    while (performance.now() - t0 < 5000 && v.readyState < 1) await new Promise((r) => setTimeout(r, 100))
+    await new Promise((r) => setTimeout(r, 300))
+    v.pause()
+    return v.currentTime
+  })
+  check('a search hit plays from that second', openedAt >= 10.5 && openedAt < 14, 't=' + openedAt.toFixed(1))
+  await page.click('.side-tabs button:has-text("Transcript")')
+  await page.waitForSelector('.side-panel .tline', { timeout: 10000 })
+  check('the player shows the transcript with the current line marked', (await page.locator('.side-panel .tline.active:has-text("halfway")').count()) === 1)
+
+  // Moments: B saves one, the note is kept.
+  await page.locator('.overlay-head h2').click()
+  await page.keyboard.press('b')
+  await page.waitForSelector('.side-panel .moment-row', { timeout: 5000 })
+  await page.fill('.side-panel .moment-note', 'the halfway point')
+  await page.press('.side-panel .moment-note', 'Enter')
+  await page.waitForTimeout(900)
+  const momentsSaved = JSON.parse(readFileSync(join(userData, 'moments.json'), 'utf8'))
+  check('B saves a moment and its note', momentsSaved.length === 1 && momentsSaved[0].note === 'the halfway point' && momentsSaved[0].videoId === 'abc123def45' && momentsSaved[0].at > 10)
+  check('the moment shows on the map under the video', (await page.locator('.overlay .timeline .tl-moment').count()) === 1)
+
+  // Loop a part with [ and ], save it as an MP4 clip, and a snapshot with S.
+  await page.evaluate(() => { document.querySelector('.overlay video').currentTime = 2 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press('[')
+  await page.evaluate(() => { document.querySelector('.overlay video').currentTime = 5 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press(']')
+  const looping = await page.locator('.player-bar .loop-label').textContent()
+  check('[ and ] set an A–B loop', /0:02.0:05/.test(looping), looping)
+  await page.click('.player-bar .save-part')
+  await page.click('.menu-item:has-text("Video clip (MP4)")')
+  const clipsDir = join(dl, 'Clips')
+  const clipMade = await waitFor(() => { try { return readdirSync(clipsDir).some((f) => /\(2s-5s\)\.mp4$/.test(f)) } catch { return false } }, 30000)
+  check('the looped part is saved as an MP4 clip', clipMade)
+  if (clipMade) {
+    const clipFile = join(clipsDir, readdirSync(clipsDir).find((f) => f.endsWith('.mp4')))
+    const clipLength = Number(execFileSync(ffmpeg.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', clipFile], { encoding: 'utf8' }).trim())
+    check('the clip is as long as the loop', Math.abs(clipLength - 3) < 0.6, clipLength.toFixed(2) + ' s')
+  }
+  await page.keyboard.press('s')
+  const snapped = await waitFor(() => { try { return readdirSync(join(dl, 'Snapshots')).some((f) => f.endsWith('.png')) } catch { return false } }, 20000)
+  check('S saves a snapshot of the frame', snapped)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(500)
+
+  // Saved moments are listed in the Moments tab and export as Markdown with links to the second.
+  await page.waitForSelector('[data-tab="moments"] .moment-group', { timeout: 5000 })
+  check('the Moments tab lists the saved moment', (await page.inputValue('[data-tab="moments"] .moment-group .moment-note')) === 'the halfway point')
+  const mdPath = join(WORK, 'moments.md')
+  await app.evaluate(({ dialog }, path) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: path }) }, mdPath)
+  await page.click('[data-tab="moments"] button:has-text("Export")')
+  const exported = await waitFor(() => { try { return readFileSync(mdPath, 'utf8').length > 0 } catch { return false } }, 5000)
+  const md = exported ? readFileSync(mdPath, 'utf8') : ''
+  check('moments export as Markdown with timestamped YouTube links', /## Test Clip/.test(md) && /watch\?v=abc123def45&t=1\d+s\) the halfway point/.test(md))
+
+  // Ctrl+K finds what was said, too.
+  await page.keyboard.press('Control+k')
+  await page.fill('.palette input', 'halfway')
+  const spoken = await page.waitForSelector('.palette-group:has-text("Said in your videos")', { timeout: 5000 }).then(() => true, () => false)
+  check('the command palette finds words said in your videos', spoken)
+  await page.keyboard.press('Escape')
+
+  // Ask your library: passages found by the app, answer with citations that play the moment.
+  await page.click('[data-tab="moments"] .segmented button:has-text("Ask your library")')
+  await page.fill('[data-tab="moments"] .link-bar input', 'What happens halfway through?')
+  await page.press('[data-tab="moments"] .link-bar input', 'Enter')
+  const cited = await page.waitForSelector('[data-tab="moments"] .qa-turn .cite:has-text("S1 · 00:12")', { timeout: 20000 }).then(() => true, () => false)
+  const qaCall = aiCalls.find((c) => c.body && c.body.messages && /passages from the user's own saved videos/.test(c.body.messages[0].content))
+  check('Ask your library sends only matching passages, labeled for citing', !!qaCall && /\[S1\] "/.test(qaCall.body.messages[0].content) && /halfway/.test(qaCall.body.messages[0].content) && !/Hello subtitles/.test(qaCall.body.messages[0].content))
+  check('the answer cites moments as buttons', cited && (await page.locator('[data-tab="moments"] .qa-sources .chip-btn').count()) >= 1)
+  await page.click('[data-tab="moments"] .qa-turn .cite:has-text("S1 · 00:12")')
+  await page.waitForSelector('.overlay video', { timeout: 10000 })
+  const citedAt = await page.evaluate(async () => {
+    const v = document.querySelector('.overlay video')
+    v.muted = true
+    const t0 = performance.now()
+    while (performance.now() - t0 < 5000 && v.readyState < 1) await new Promise((r) => setTimeout(r, 100))
+    await new Promise((r) => setTimeout(r, 300))
+    v.pause()
+    return v.currentTime
+  })
+  check('a citation plays the cited second', citedAt >= 11.5 && citedAt < 14, 't=' + citedAt.toFixed(1))
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+
+  // SponsorBlock while streaming: the sponsor read (5-8 s) is jumped over, with an undo.
+  await page.click('button.nav-item:has-text("Stream")')
+  check('SponsorBlock is asked by hash prefix only', sponsorCalls.length > 0 && sponsorCalls.every((u) => /^\/api\/skipSegments\/[0-9a-f]{4}\?/.test(u) && !u.includes('abc123def45')))
+  const skippedTo = await page.evaluate(async () => {
+    const v = document.querySelector('[data-tab="stream"] .video-frame video')
+    v.muted = true
+    v.currentTime = 4.2
+    try { await v.play() } catch {}
+    const t0 = performance.now()
+    while (performance.now() - t0 < 6000 && v.currentTime < 7.9) await new Promise((r) => setTimeout(r, 100))
+    return v.currentTime
+  })
+  const chip = await page.waitForSelector('[data-tab="stream"] .skip-chip', { timeout: 3000 }).then(() => true, () => false)
+  check('a sponsor segment is skipped while streaming', skippedTo >= 7.9 && chip, 't=' + skippedTo.toFixed(1))
+  if (chip) await page.click('[data-tab="stream"] .skip-chip button:has-text("Watch it")')
+  await page.waitForTimeout(400)
+  const undone = await page.evaluate(() => {
+    const v = document.querySelector('[data-tab="stream"] .video-frame video')
+    const t = v.currentTime
+    v.pause()
+    return t
+  })
+  check('"Watch it" goes back to the skipped part', undone >= 4.9 && undone < 7, 't=' + undone.toFixed(1))
 
   // ---- yt-dlp invocation
   const calls = readFileSync(join(WORK, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.args[0] !== '--version')

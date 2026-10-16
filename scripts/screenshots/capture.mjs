@@ -7,6 +7,7 @@
 // (gradients + titles), so no real YouTube content appears. Needs python3 and ffmpeg (with drawtext).
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -100,6 +101,44 @@ copyFileSync(join(HERE, 'fake-ytdlp'), join(WORK, 'fake-ytdlp'))
 chmodSync(join(WORK, 'fake-ytdlp'), 0o755)
 const fake = fakeYtdlpCommand(join(WORK, 'fake-ytdlp'), WORK)
 
+// What is said in the talk videos, as subtitle files next to the downloads (searchable in Moments).
+const SPOKEN = {
+  blackHole03: [
+    [5, 'Imagine falling toward a black hole.'], [72, 'Nothing, not even light, escapes past the event horizon.'],
+    [160, 'The accretion disk glows because its temperature reaches millions of degrees.'], [245, 'Time near the horizon slows down for a distant observer.'],
+    [330, 'This stretching has a name: spaghettification.'], [430, 'Hawking radiation means black holes slowly evaporate.'],
+    [525, "And a black hole's temperature is lower the bigger it is."], [620, 'Supermassive black holes sit at the center of most galaxies.'],
+    [720, 'In 2019 we finally saw the first image of one, in M87.'], [870, "So what really happens inside? We simply don't know yet."],
+  ],
+  sourdough04: [
+    [4, 'Today we make sourdough from scratch, starting with the starter.'], [90, 'Mix equal parts flour and water by weight.'],
+    [190, 'Keep the starter somewhere warm: temperature matters more than time.'], [380, 'Autolyse: rest the flour and water for an hour.'],
+    [585, 'Stretch and fold every thirty minutes.'], [750, 'Aim for a dough temperature around 24 degrees.'],
+    [960, 'Shape it tight and let it proof overnight in the fridge.'], [1215, 'Bake at 250 with the lid on, then 230 without.'],
+  ],
+  tinyHouse02: [
+    [6, 'Thirty days, one trailer, and a lot of coffee.'], [120, 'Day one is all about the floor and the frame.'],
+    [400, "We used sheep's wool insulation to keep the temperature steady."], [680, 'The roof went on just before the rain.'],
+    [930, 'Solar panels power everything, including the fridge.'], [1270, 'The loft bed saves almost half the floor space.'],
+  ],
+  rustCourse5: [
+    [10, 'In the next 100 minutes we build a real command line tool in Rust.'], [270, 'cargo new creates the project for us.'],
+    [720, 'Ownership is the idea that makes Rust different.'], [1540, 'Our first feature converts a temperature from Celsius to Fahrenheit.'],
+    [2475, 'Errors in Rust are values: meet the Result type.'], [3500, "Now let's parse the command line arguments with clap."],
+    [4790, 'Write a test for the temperature conversion.'], [5790, 'Ship it with cargo build --release.'],
+  ],
+  yogaFlow008: [
+    [3, "Good morning, roll out your mat and let's begin."], [80, "Start in child's pose and breathe slowly."],
+    [310, 'Move into downward dog and pedal your feet.'], [580, 'Warrior two: keep the front knee over the ankle.'],
+  ],
+}
+const srtTime = (t) => {
+  const pad = (n, w = 2) => String(n).padStart(w, '0')
+  return pad(Math.floor(t / 3600)) + ':' + pad(Math.floor((t % 3600) / 60)) + ':' + pad(Math.floor(t % 60)) + ',000'
+}
+const srt = (lines) => lines.map(([t, text], i) => i + 1 + '\n' + srtTime(t) + ' --> ' + srtTime(t + 5) + '\n' + text + '\n').join('\n')
+const CHAPTERS = { blackHole03: [[0, 'Falling in'], [10, 'The event horizon'], [20, 'Spaghettification'], [30, 'Hawking radiation']] }
+
 // ---- library on disk
 const dl = join(WORK, 'Videos', 'YTD Studio')
 mkdirSync(dl, { recursive: true })
@@ -111,8 +150,11 @@ function addItem(id, folder, index, kind = 'video') {
   const base = (index ? String(index).padStart(3, '0') + ' - ' : '') + v.title.replace(/[\\/:*?"<>|]/g, '-') + ' [' + v.id + ']'
   copyFileSync(join(media, 'muxed.mp4'), join(dir, base + (kind === 'audio' ? '.mp3' : '.mp4')))
   copyFileSync(join(thumbs, v.id + '.png'), join(dir, base + '.png'))
-  writeFileSync(join(dir, base + '.info.json'), JSON.stringify({ id: v.id, title: v.title, uploader: v.channel, duration: v.duration }))
+  // No caption tracks listed: music without captions is checked without asking "YouTube".
+  const chapters = (CHAPTERS[id] ?? []).map(([start_time, title]) => ({ start_time, title }))
+  writeFileSync(join(dir, base + '.info.json'), JSON.stringify({ id: v.id, title: v.title, uploader: v.channel, duration: v.duration, subtitles: {}, automatic_captions: {}, chapters }))
   if (id === 'tokyoNight6') writeFileSync(join(dir, base + '.en.srt'), '1\n00:00:01,000 --> 00:00:06,000\nWe leave Shinjuku just after midnight.\n')
+  if (SPOKEN[id]) writeFileSync(join(dir, base + '.en.srt'), srt(SPOKEN[id]))
   return (folder ? folder + '/' : '') + base + (kind === 'audio' ? '.mp3' : '.mp4')
 }
 const keys = {}
@@ -144,6 +186,16 @@ writeFileSync(
       { id: 'UCcitywalks', url: 'https://www.youtube.com/@citywalks/videos', title: 'City Walks', folder: 'City Walks', mode: 'video_audio', height: 1080, audioFormat: 'mp3', thumbnail: 'https://i.ytimg.com/vi/tokyoNight6/hqdefault.jpg', knownIds: ['tokyoNight6'], lastSync: now - 5 * 3600 * 1000, lastAdded: 0 },
     ],
   }),
+)
+writeFileSync(
+  join(userData, 'moments.json'),
+  JSON.stringify([
+    { id: 'm1', key: keys.blackHole03, videoId: 'blackHole03', url: 'https://www.youtube.com/watch?v=blackHole03', title: byId.blackHole03.title, channel: 'Curious Cosmos', at: 12, note: 'Event horizon: the point of no return', createdAt: now - 2 * day },
+    { id: 'm2', key: keys.blackHole03, videoId: 'blackHole03', url: 'https://www.youtube.com/watch?v=blackHole03', title: byId.blackHole03.title, channel: 'Curious Cosmos', at: 31, note: 'Hawking radiation, explain this to Sam', createdAt: now - 2 * day + 60000 },
+    { id: 'm3', key: keys.sourdough04, videoId: 'sourdough04', url: 'https://www.youtube.com/watch?v=sourdough04', title: byId.sourdough04.title, channel: 'Crumb & Crust', at: 750, note: 'Dough temperature ~24 °C', createdAt: now - day },
+    { id: 'm4', key: keys.sourdough04, videoId: 'sourdough04', url: 'https://www.youtube.com/watch?v=sourdough04', title: byId.sourdough04.title, channel: 'Crumb & Crust', at: 1215, note: 'Bake: 250 lid on, 230 lid off', createdAt: now - day + 60000 },
+    { id: 'm5', key: null, videoId: 'starGazin15', url: 'https://www.youtube.com/watch?v=starGazin15', title: byId.starGazin15.title, channel: 'Night Sky Club', at: 845, note: 'How to find Polaris', createdAt: now - 3 * 3600 * 1000 },
+  ]),
 )
 const job = (id, status, extra = {}) => {
   const v = byId[id]
@@ -219,6 +271,12 @@ const ollama = createServer((req, res) => {
   let raw = ''
   req.on('data', (c) => (raw += c))
   req.on('end', async () => {
+    // SponsorBlock stand-in: one sponsor read in the Tokyo video.
+    if (req.url.startsWith('/api/skipSegments/')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify([{ videoID: 'tokyoNight6', hash: createHash('sha256').update('tokyoNight6').digest('hex'), segments: [{ segment: [18, 25], category: 'sponsor', actionType: 'skip' }] }]))
+      return
+    }
     const body = raw ? JSON.parse(raw) : null
     if (req.url === '/api/tags') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -244,6 +302,23 @@ const ollama = createServer((req, res) => {
       )
     }
     if (/answer questions about one YouTube video/.test(system)) return streamChat(res, 'The Rainbow Bridge section starts at [14:30] and lasts about four minutes.')
+    if (/passages from the user's own saved videos/.test(system)) {
+      // Cite the passages the app actually sent, by their labels and timestamps.
+      const refs = {}
+      for (const m of system.matchAll(/\[(S\d+)\] "([^"]+)"\n\[([\d:]+)\] ([^\n]+)/g)) {
+        const topic = /sourdough/i.test(m[2]) ? 'bread' : /black hole/i.test(m[2]) ? 'space' : /tiny house/i.test(m[2]) ? 'house' : 'rust'
+        ;(refs[topic] = refs[topic] ?? []).push(m[1] + ' ' + m[3])
+      }
+      const c = (topic, i = 0) => (refs[topic] && refs[topic][i] ? '[' + refs[topic][i] + ']' : '')
+      return streamChat(
+        res,
+        'Temperature comes up in four of your videos, for very different reasons:\n\n' +
+          '- **Sourdough:** keep the starter warm, because temperature matters more than time ' + c('bread') + ', and aim for a dough around 24 °C ' + c('bread', 1) + '.\n' +
+          '- **Black holes:** the accretion disk glows at millions of degrees ' + c('space') + ', while a black hole itself gets *colder* the bigger it is ' + c('space', 1) + '.\n' +
+          "- **Tiny house:** sheep's wool insulation keeps the temperature steady " + c('house') + '.\n' +
+          '- **Rust course:** a Celsius-to-Fahrenheit converter is the first feature ' + c('rust') + ' and gets a test later ' + c('rust', 1) + '.',
+      )
+    }
     return streamChat(res, 'YTD Studio is connected.')
   })
 })
@@ -251,7 +326,7 @@ await new Promise((resolve) => ollama.listen(0, '127.0.0.1', resolve))
 writeFileSync(join(userData, 'settings.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(userData, 'settings.json'), 'utf8')), aiHost: 'http://127.0.0.1:' + ollama.address().port, aiModel: 'gpt-oss:120b' }))
 
 // ---- run the app
-const env = { ...process.env, YTD_USER_DATA: userData, XDG_CONFIG_HOME: config, APPDATA: config, FAKE_MEDIA_BASE: mediaBase, FAKE_STEP: '0.6' }
+const env = { ...process.env, YTD_USER_DATA: userData, XDG_CONFIG_HOME: config, APPDATA: config, FAKE_MEDIA_BASE: mediaBase, FAKE_STEP: '0.6', YTD_SPONSORBLOCK_URL: 'http://127.0.0.1:' + ollama.address().port }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.OLLAMA_API_KEY
 const app = await _electron.launch({ executablePath: electronPath, args: ['--no-sandbox', '--force-device-scale-factor=1', REPO], cwd: REPO, env })
@@ -312,21 +387,50 @@ try {
   await page.waitForSelector('.lib-card', { timeout: 10000 })
   await shot('library')
 
-  // Player
-  await page.locator('.lib-card:has-text("Synthwave")').locator('button:has-text("Play")').click()
+  // Moments: make the library searchable, then search what is said
+  await nav('Moments')
+  await page.waitForSelector('[data-tab="moments"] .index-row', { timeout: 10000 })
+  const searchable = page.locator('[data-tab="moments"] button:has-text("Make my library searchable")')
+  if (await searchable.count()) await searchable.click()
+  for (let i = 0; i < 60; i += 1) {
+    const st = await page.evaluate(async () => (await window.api.transcriptStatus()).data)
+    if (!st.running && !st.pending) break
+    await page.waitForTimeout(500)
+  }
+  await page.fill('[data-tab="moments"] .link-bar input', 'temperature')
+  await page.waitForSelector('[data-tab="moments"] .hit-card', { timeout: 10000 })
+  await shot('moments')
+
+  // Ask your library
+  await page.click('[data-tab="moments"] .segmented button:has-text("Ask your library")')
+  await page.fill('[data-tab="moments"] .link-bar input', 'Why does temperature matter in my videos?')
+  await page.press('[data-tab="moments"] .link-bar input', 'Enter')
+  await page.waitForSelector('[data-tab="moments"] .qa-turn .cite', { timeout: 20000 })
+  await page.waitForTimeout(600)
+  await shot('ask-library')
+  await page.click('[data-tab="moments"] .segmented button:has-text("Search what was said")')
+
+  // Player, opened from a saved moment: transcript following playback, chapters, moments on the map, an A–B loop
+  await page.locator('[data-tab="moments"] .moment-group:has-text("black hole") .moment-time').first().click()
   await page.waitForSelector('.overlay video', { timeout: 10000 })
   await page.evaluate(async () => {
     const v = document.querySelector('.overlay video')
     v.muted = true
-    await new Promise((r) => setTimeout(r, 1500))
-    v.currentTime = 6
+    await new Promise((r) => setTimeout(r, 1200))
+    v.currentTime = 20
     v.pause()
-    const track = v.textTracks[0]
-    if (track) track.mode = 'showing'
   })
-  await page.click('.overlay button:has-text("Shortcuts")')
+  await page.waitForTimeout(300)
+  await page.keyboard.press('[')
+  await page.evaluate(() => { document.querySelector('.overlay video').currentTime = 26 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press(']')
+  await page.evaluate(() => { const v = document.querySelector('.overlay video'); v.currentTime = 23; v.pause() })
+  await page.click('.side-tabs button:has-text("Transcript")')
+  await page.waitForSelector('.side-panel .tline', { timeout: 10000 })
   await shot('player')
-  await page.keyboard.press('Escape')
+  await page.click('.side-tabs button:has-text("Moments")')
+  await shot('player-moments')
   await page.keyboard.press('Escape')
 
   // Playlists

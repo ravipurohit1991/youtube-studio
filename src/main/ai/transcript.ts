@@ -18,9 +18,24 @@ export interface VideoContext {
   transcript: string
 }
 
-interface Cue {
+export interface Cue {
   start: number
   text: string
+}
+
+/** Captions of one video, as fetched for the AI: which track, and its lines. */
+export interface CaptionTrack {
+  videoId: string
+  lang: string
+  auto: boolean
+  cues: Cue[]
+}
+
+let captionListener: ((track: CaptionTrack) => void) | null = null
+
+/** Called with every caption track fetched here, so the transcript index can keep it. */
+export function onCaptions(listener: (track: CaptionTrack) => void): void {
+  captionListener = listener
 }
 
 /** Roughly 12k tokens of transcript: plenty for a summary, and fits small local context windows too. */
@@ -41,7 +56,8 @@ export function clock(seconds: number): string {
 }
 
 function parseTime(value: string): number {
-  const parts = value.trim().split(':').map(Number)
+  // WebVTT writes 00:01.000, SRT 00:00:01,000.
+  const parts = value.trim().replace(',', '.').split(':').map(Number)
   if (parts.some((n) => isNaN(n))) return 0
   return parts.reduce((sum, n) => sum * 60 + n, 0)
 }
@@ -57,7 +73,7 @@ function decodeEntities(text: string): string {
 }
 
 /**
- * WebVTT to cues. YouTube's automatic captions "roll": each cue repeats the previous line and adds
+ * WebVTT (or SRT) to cues. YouTube's automatic captions "roll": each cue repeats the previous line and adds
  * a new one, so a line already emitted is skipped.
  */
 export function parseVtt(vtt: string): Cue[] {
@@ -119,6 +135,35 @@ export function pickCaptionTrack(info: Record<string, unknown>): { lang: string;
   return auto.length ? { lang: auto[0], auto: true } : null
 }
 
+/** Download the best caption track of a video (see pickCaptionTrack) and parse it; null when there is none. */
+export async function fetchCaptions(info: Record<string, unknown>, url: string): Promise<CaptionTrack | null> {
+  const track = pickCaptionTrack(info)
+  if (!track) return null
+  const dir = mkdtempSync(join(tmpdir(), 'ytd-captions-'))
+  try {
+    const file = await downloadCaptions(str(info.webpage_url) ?? url, track.lang, track.auto, dir)
+    // The video has captions but none arrived (offline, rate limited): a failure, not "no captions".
+    if (!file) throw new Error('The captions could not be downloaded. Check your connection and try again.')
+    const cues = parseVtt(readFileSync(file, 'utf8'))
+    if (!cues.length) return null
+    const result: CaptionTrack = { videoId: str(info.id) ?? '', lang: track.lang, auto: track.auto, cues }
+    if (result.videoId && captionListener) {
+      try {
+        captionListener(result)
+      } catch (err) {
+        logError('ai.captions.listener', err)
+      }
+    }
+    return result
+  } finally {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* temp cleanup is best effort */
+    }
+  }
+}
+
 export async function videoContext(url: string): Promise<VideoContext> {
   const known = cache.get(url)
   if (known) return known
@@ -131,23 +176,13 @@ export async function videoContext(url: string): Promise<VideoContext> {
   }
   if (info._type === 'playlist') throw new Error('That is a playlist. Open a single video to summarize it.')
 
-  const track = pickCaptionTrack(info)
-  let transcript = ''
-  if (track) {
-    const dir = mkdtempSync(join(tmpdir(), 'ytd-captions-'))
-    try {
-      const file = await downloadCaptions(str(info.webpage_url) ?? url, track.lang, track.auto, dir)
-      if (file) transcript = compactTranscript(parseVtt(readFileSync(file, 'utf8')))
-    } catch (err) {
-      logError('ai.captions', err)
-    } finally {
-      try {
-        rmSync(dir, { recursive: true, force: true })
-      } catch {
-        /* temp cleanup is best effort */
-      }
-    }
+  let track: CaptionTrack | null = null
+  try {
+    track = await fetchCaptions(info, url)
+  } catch (err) {
+    logError('ai.captions', err)
   }
+  const transcript = track ? compactTranscript(track.cues) : ''
   log('ai: transcript for ' + id + ': ' + (transcript ? transcript.length + ' chars (' + track?.lang + (track?.auto ? ', auto' : '') + ')' : 'none'))
 
   const chapters = Array.isArray(info.chapters)

@@ -1,10 +1,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, relative, basename, resolve, sep } from 'node:path'
 import { shell } from 'electron'
-import type { LibraryItem, MediaKind } from '@shared/types'
+import type { Chapter, LibraryItem, MediaKind } from '@shared/types'
 import { log, logError } from './logger'
 import { imageProxyUrl, mediaUrlForPath, subtitleUrlForPath } from './media-server'
 import { settings } from './settings'
+import { fileTimeline } from './timeline'
 
 const VIDEO_EXT = ['.mp4', '.mkv', '.webm', '.mov', '.m4v', '.avi', '.flv', '.3gp', '.ts']
 const AUDIO_EXT = ['.mp3', '.m4a', '.opus', '.ogg', '.oga', '.wav', '.flac', '.aac']
@@ -77,6 +78,41 @@ interface InfoShape {
   thumbnail?: string
   playlist_title?: string
   playlist_index?: number
+  chapters?: { start_time?: number; title?: string }[]
+}
+
+/** Chapters on the file's own timeline (a clip or a download with sponsors cut out starts them earlier). */
+function chaptersOf(info: InfoShape | null): Chapter[] {
+  if (!info || !Array.isArray(info.chapters)) return []
+  const timeline = fileTimeline(info as unknown as Record<string, unknown>)
+  const byStart = new Map<number, Chapter>()
+  info.chapters
+    .filter(function (c) { return !!c && typeof c.title === 'string' && c.title.trim() !== '' })
+    .map(function (c) {
+      const start = typeof c.start_time === 'number' ? Math.max(0, c.start_time) : 0
+      return { start: timeline ? timeline.snap(start) : start, title: String(c.title).trim() }
+    })
+    .sort(function (a, b) { return (a.start ?? 0) - (b.start ?? 0) })
+    .forEach(function (c) {
+      // A chapter that starts in a removed part begins where the file goes on; the later one wins.
+      if (c.start !== null) byStart.set(Math.round(c.start * 1000) / 1000, { start: c.start, title: c.title })
+    })
+  return Array.from(byStart.values())
+}
+
+let lastScan: LibraryItem[] | null = null
+
+/** The items of the latest scan (null before the first one). */
+export function cachedLibrary(): LibraryItem[] | null {
+  return lastScan
+}
+
+/** yt-dlp's .info.json next to a media file (shared by its video and audio versions), or null. */
+export function infoJsonPath(absPath: string): string | null {
+  const name = basename(absPath)
+  const stem = name.slice(0, name.length - extname(name).length).replace(FORMAT_PART, '$1')
+  const candidate = join(absPath, '..', stem + SIDECAR_INFO)
+  return existsSync(candidate) ? candidate : null
 }
 
 function readInfo(path: string): InfoShape | null {
@@ -90,7 +126,10 @@ function readInfo(path: string): InfoShape | null {
 
 export async function scanLibrary(): Promise<LibraryItem[]> {
   const root = resolve(settings.get('downloadsDir'))
-  if (!existsSync(root)) return []
+  if (!existsSync(root)) {
+    lastScan = []
+    return []
+  }
   const files: string[] = []
   walk(root, 3, files)
   const sidecars = new Map<string, Sidecars>()
@@ -188,11 +227,13 @@ export async function scanLibrary(): Promise<LibraryItem[]> {
       isPlaylistPart: typeof info?.playlist_index === 'number' || !!info?.playlist_title || m.dir !== root,
       key: relative(root, m.full).split(sep).join('/'),
       folder: m.dir === root ? null : relative(root, m.dir).split(sep).join('/'),
+      chapters: chaptersOf(info),
     })
   })
 
   const sorted = items.sort(function (a, b) { return b.mtime - a.mtime })
   log('library: found', sorted.length, 'items in', root)
+  lastScan = sorted
   return sorted
 }
 

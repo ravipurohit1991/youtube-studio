@@ -23,6 +23,8 @@ interface Props {
   library: LibraryItem[]
   onPlayItem: (item: LibraryItem) => void
   onClose: () => void
+  /** Slower results found after typing stops (what is said in your videos). */
+  searchMore?: (query: string) => Promise<PaletteCommand[]>
 }
 
 function matches(text: string, words: string[]): boolean {
@@ -31,10 +33,28 @@ function matches(text: string, words: string[]): boolean {
 }
 
 /** Ctrl+K: jump anywhere, run any action, find anything in the library, or act on a pasted link. */
-export default function CommandPalette({ commands, linkCommands, library, onPlayItem, onClose }: Props): ReactNode {
+export default function CommandPalette({ commands, linkCommands, library, onPlayItem, onClose, searchMore }: Props): ReactNode {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
+  const [more, setMore] = useState<{ query: string; items: PaletteCommand[] }>({ query: '', items: [] })
   const listRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const q = query.trim()
+    if (!searchMore || q.length < 3 || findYouTubeUrl(q)) return undefined
+    let gone = false
+    const timer = window.setTimeout(() => {
+      void searchMore(q)
+        .then((items) => {
+          if (!gone) setMore({ query: q, items })
+        })
+        .catch(() => undefined)
+    }, 260)
+    return () => {
+      gone = true
+      window.clearTimeout(timer)
+    }
+  }, [query, searchMore])
 
   const results = useMemo(() => {
     const link = findYouTubeUrl(query)
@@ -66,10 +86,11 @@ export default function CommandPalette({ commands, linkCommands, library, onPlay
           meta: item.uploader ?? item.ext.toUpperCase(),
           run: () => onPlayItem(item),
         }))
-      return [...found, ...items]
+      const spoken = more.query === query.trim() ? more.items : []
+      return [...found, ...items, ...spoken]
     }
     return found
-  }, [query, commands, linkCommands, library, onPlayItem])
+  }, [query, commands, linkCommands, library, onPlayItem, more])
 
   useEffect(() => setActive(0), [query])
 

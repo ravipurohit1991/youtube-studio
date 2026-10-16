@@ -8,7 +8,18 @@ import type {
   AppInfo,
   AskRequest,
   BackupSummary,
+  ClipRequest,
   DiscoverRequest,
+  LibraryAnswer,
+  LibraryAskRequest,
+  Moment,
+  MomentInput,
+  SavedFile,
+  SkipSegment,
+  SnapshotRequest,
+  Transcript,
+  TranscriptIndexStatus,
+  TranscriptSearchResult,
   DiscoverResult,
   InsightRequest,
   InsightResult,
@@ -34,10 +45,12 @@ import type {
 } from '@shared/types'
 import { discover } from './ai/discover'
 import { ask, organize, summarize } from './ai/insights'
+import { askLibrary } from './ai/library-qa'
 import { aiStatus, beginRequest, cancelRequest, chat, clearApiKey, endRequest, listModels, requireReady, saveApiKey } from './ai/ollama'
 import { taste, updateTaste } from './ai/taste'
 import { exportBackup, importBackup } from './backup'
 import { broadcast } from './bus'
+import { exportClip, snapshot } from './clips'
 import { downloads } from './downloads'
 import { FFMPEG_DOWNLOAD_URL, ffmpegStatus, installFfmpeg, invalidateFfmpeg } from './ffmpeg'
 import { relative, resolve, sep } from 'node:path'
@@ -45,9 +58,12 @@ import { deleteLibraryItem, scanLibrary } from './library'
 import { libraryState, safeFolderName } from './library-state'
 import { logError } from './logger'
 import { createStreamSession, dropStreamSession, getMediaPort } from './media-server'
+import { addMoment, exportMoments, moments, removeMoment, updateMoment } from './moments'
 import { binDir, defaultDownloadsDir, ensureDir } from './paths'
 import { settings } from './settings'
+import { sponsorSegments } from './sponsorblock'
 import { syncSaved } from './sync'
+import { cancelIndexing, forgetTranscript, searchTranscripts, startIndexing, transcriptFor, transcriptForUrl, transcriptStatus } from './transcript-index'
 import { clearProbeCache, describe, resolveStream } from './stream'
 import { checkYtdlpUpdate, installYtdlp, invalidateBinary, ytdlpStatus } from './ytdlp'
 
@@ -226,7 +242,9 @@ export function registerIpc(): void {
   handle(IPC.libraryDelete, async (absPath: string): Promise<string[]> => {
     const trashed = await deleteLibraryItem(absPath)
     if (!trashed.length) throw new Error('Nothing could be moved to the trash.')
-    libraryState.forget(relative(resolve(settings.get('downloadsDir')), resolve(absPath)).split(sep).join('/'))
+    const key = relative(resolve(settings.get('downloadsDir')), resolve(absPath)).split(sep).join('/')
+    libraryState.forget(key)
+    forgetTranscript(key)
     return trashed
   })
 
@@ -321,6 +339,41 @@ export function registerIpc(): void {
   })
   handle(IPC.aiTaste, (): TasteProfile => taste())
   handle(IPC.aiTasteUpdate, (action: TasteAction): TasteProfile => updateTaste(action))
+
+  handle(IPC.aiAskLibrary, (req: LibraryAskRequest): Promise<LibraryAnswer> => {
+    if (!req) throw new Error('Type a question first.')
+    return aiRun(req.requestId, (emit, signal) => askLibrary(req, emit, signal))
+  })
+
+  handle(IPC.transcriptStatus, (): Promise<TranscriptIndexStatus> => transcriptStatus())
+  // Asked for by hand: reads that failed earlier are tried again right away.
+  handle(IPC.transcriptIndex, (): Promise<TranscriptIndexStatus> => startIndexing(undefined, true))
+  handle(IPC.transcriptCancel, (): Promise<TranscriptIndexStatus> => cancelIndexing())
+  handle(IPC.transcriptGet, (key: string): Promise<Transcript | null> => {
+    if (!key) throw new Error('Nothing to read.')
+    return transcriptFor(String(key))
+  })
+  handle(IPC.transcriptForUrl, (url: string): Promise<Transcript | null> => {
+    if (!url || !String(url).trim()) throw new Error('Open a video first.')
+    return transcriptForUrl(String(url).trim())
+  })
+  handle(IPC.transcriptSearch, (query: string, limit?: number): Promise<TranscriptSearchResult> => searchTranscripts(String(query ?? ''), Number(limit) || 40))
+
+  handle(IPC.momentsList, (): Moment[] => moments())
+  handle(IPC.momentAdd, (input: MomentInput): Moment => addMoment(input))
+  handle(IPC.momentUpdate, (id: string, note: string): Moment[] => updateMoment(String(id), String(note ?? '')))
+  handle(IPC.momentRemove, (id: string): Moment[] => removeMoment(String(id)))
+  handle(IPC.momentsExport, (filter?: { key?: string | null; videoId?: string | null }): Promise<string | null> => exportMoments(filter))
+
+  handle(IPC.sponsorSegments, (videoId: string): Promise<SkipSegment[]> => sponsorSegments(String(videoId ?? '')))
+  handle(IPC.clipExport, (req: ClipRequest): Promise<SavedFile> => {
+    if (!req || !req.absPath) throw new Error('Open a downloaded file first.')
+    return exportClip(req)
+  })
+  handle(IPC.clipSnapshot, (req: SnapshotRequest): Promise<SavedFile> => {
+    if (!req || !req.absPath) throw new Error('Open a downloaded file first.')
+    return snapshot(req)
+  })
 
   handle(IPC.notifyToast, (payload: unknown): true => {
     broadcast(IPC.notifyToast, payload)

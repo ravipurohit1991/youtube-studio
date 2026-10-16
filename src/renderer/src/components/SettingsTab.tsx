@@ -86,13 +86,16 @@ const SECTIONS: { id: string; label: string; icon: ReactNode }[] = [
 const SHORTCUTS: Array<[string, string]> = [
   ['Ctrl+K', 'Search, paste a link or run any command'],
   ['Ctrl+V', 'Paste a YouTube link anywhere to open it'],
-  ['Ctrl+1', 'Home (' + MOD + '+2 to ' + MOD + '+7: the other tabs)'],
+  ['Ctrl+1', 'Home (' + MOD + '+2 to ' + MOD + '+8: the other tabs)'],
   ['Ctrl+,', 'Settings'],
   ['Space', 'Player: play / pause'],
   ['J', 'Player: back 10 s (L: forward)'],
   ['0', 'Player: jump to 0%-90% with 0-9'],
   ['C', 'Player: subtitles'],
   ['I', 'Player: picture-in-picture'],
+  ['B', 'Player and Stream: save this moment'],
+  ['[', 'Player: loop from here (] to here, \\ off)'],
+  ['S', 'Player: snapshot of this frame'],
   ['?', 'Player: all player shortcuts'],
 ]
 
@@ -218,6 +221,18 @@ export default function SettingsTab({
             </OptionRow>
             <OptionRow title="Resume where I left off" hint="Library videos and songs continue from the last position.">
               <Switch checked={settings.resumePlayback} onChange={(on) => set({ resumePlayback: on })} />
+            </OptionRow>
+            <OptionRow
+              title="Skip sponsors while watching"
+              hint="SponsorBlock: sponsor reads, self-promotion and 'like and subscribe' parts are jumped over in the Stream tab and the player, with an undo. Only a short hash prefix of the video id is sent, never the video itself."
+            >
+              <Switch checked={settings.skipSponsorsLive} onChange={(on) => set({ skipSponsorsLive: on })} />
+            </OptionRow>
+            <OptionRow
+              title="Make new downloads searchable"
+              hint="Reads the captions of each new download (or its subtitle file) so Moments can find every word said in it and the player can show the transcript. Kept on this computer."
+            >
+              <Switch checked={settings.indexTranscripts} onChange={(on) => set({ indexTranscripts: on })} />
             </OptionRow>
           </div>
 

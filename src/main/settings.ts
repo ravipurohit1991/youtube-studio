@@ -38,10 +38,12 @@ function defaults(): Settings {
     embedMetadata: true,
     autoSyncHours: 0,
     videoCodec: 'compatible',
+    skipSponsorsLive: true,
+    indexTranscripts: true,
   }
 }
 
-const VALID_TABS: TabId[] = ['home', 'discover', 'stream', 'download', 'library', 'playlists', 'settings']
+const VALID_TABS: TabId[] = ['home', 'discover', 'stream', 'download', 'library', 'playlists', 'moments', 'settings']
 const ACCENTS: AccentName[] = ['crimson', 'violet', 'ocean', 'emerald', 'amber', 'rose']
 const SYNC_HOURS = [0, 1, 3, 6, 12, 24]
 
@@ -60,6 +62,8 @@ function coerce(raw: Partial<Settings>): Settings {
   if (!ACCENTS.includes(merged.accent)) merged.accent = base.accent
   if (!SYNC_HOURS.includes(merged.autoSyncHours)) merged.autoSyncHours = 0
   if (merged.videoCodec !== 'compatible' && merged.videoCodec !== 'best') merged.videoCodec = 'compatible'
+  if (typeof merged.skipSponsorsLive !== 'boolean') merged.skipSponsorsLive = base.skipSponsorsLive
+  if (typeof merged.indexTranscripts !== 'boolean') merged.indexTranscripts = base.indexTranscripts
   // yt-dlp rate syntax: a number with an optional K/M/G suffix.
   merged.rateLimit = typeof merged.rateLimit === 'string' && /^\d+(\.\d+)?[KMG]?$/i.test(merged.rateLimit.trim()) ? merged.rateLimit.trim().toUpperCase() : ''
   return merged

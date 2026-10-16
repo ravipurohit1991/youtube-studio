@@ -120,7 +120,10 @@ export function MoreMenu({ items, label = 'More', className = 'btn small ghost',
       if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
     }
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key !== 'Escape') return
+      // Escape closes the menu only, not the player or dialog the menu sits in (they listen on window).
+      event.stopPropagation()
+      setOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)

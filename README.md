@@ -5,13 +5,21 @@
 **Watch YouTube without ads, save anything in one click, and keep it all organized.**
 A desktop app for Windows and macOS, plus apps for Android and iPhone, with an optional AI layer that finds videos *for you*.
 
-[Download the latest release](../../releases/latest) · [Features](#features) · [macOS](#macos-app) · [iPhone](#iphone-and-ipad-app) · [Android](#android-app) · [AI](#ai-discover-summaries-and-smart-playlists-ollama) · [Build from source](#quick-start)
+[Download the latest release](../../releases/latest) · [Features](#features) · [Moments](#moments-search-inside-your-videos) · [macOS](#macos-app) · [iPhone](#iphone-and-ipad-app) · [Android](#android-app) · [AI](#ai-discover-summaries-and-smart-playlists-ollama) · [Build from source](#quick-start)
 
 <img src="docs/screenshots/home.png" alt="YTD Studio Home: a pasted link with Watch now, one-click video and audio downloads, stats and downloads in progress" width="900">
 
 </div>
 
 ---
+
+## What's new in 2.1
+
+**Every word you saved is now searchable.** A new **[Moments](#moments-search-inside-your-videos)** tab finds any word
+said in your downloads and plays the video from that second, **Ask your library** answers questions from your own
+videos with citations you can click, and **B** bookmarks a moment with a note. The player gets a **live transcript**,
+**chapters**, an **A–B loop** you can save as an **MP4 clip, GIF or MP3**, **snapshots**, and **SponsorBlock now skips
+sponsors while you watch**. Desktop only for now. See the [release notes](.github/release-notes/v2.1.0.md).
 
 ## What's new in 2.0
 
@@ -26,10 +34,12 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 | --- | --- |
 | ![Download: quality cards with size estimates, clip range and SponsorBlock](docs/screenshots/download.png) | ![Queue: pause, resume, download next, overall progress](docs/screenshots/queue.png) |
 | **Download**: pick video or audio, see the size of every quality, cut a clip, skip sponsors. | **Queue**: live progress, pause / resume, "download next", Pause all, retry with a reason. |
-| ![Library grid with continue watching](docs/screenshots/library.png) | ![Player with up next, sleep timer and shortcuts](docs/screenshots/player.png) |
-| **Library**: continue watching, favorites, channels, grid or list, multi-select. | **Player**: up next, shuffle, repeat, speed, subtitles, picture-in-picture, sleep timer. |
+| ![Library grid with continue watching](docs/screenshots/library.png) | ![Player with the live transcript, chapters, saved moments and an A–B loop](docs/screenshots/player.png) |
+| **Library**: continue watching, favorites, channels, grid or list, multi-select. | **Player**: live transcript, chapters, moments on a map of the video, A–B loop saved as a clip or GIF. |
+| ![Moments: one word found across four very different videos](docs/screenshots/moments.png) | ![Ask your library: an answer citing the exact moments](docs/screenshots/ask-library.png) |
+| **Search inside your videos**: every place a word is said, across your whole library. Click a line to play from there. | **Ask your library**: answers from your own videos; every citation plays that moment. |
 | ![Stream with an AI summary and clickable key moments](docs/screenshots/stream.png) | ![Discover: AI-ranked results with reasons](docs/screenshots/discover.png) |
-| **Stream** ad-free, with an AI *TL;DW* whose key moments seek the video. | **Discover**: describe what you want; AI plans the searches and ranks every result for you. |
+| **Stream** ad-free and sponsor-free, with an AI *TL;DW* whose key moments seek the video. | **Discover**: describe what you want; AI plans the searches and ranks every result for you. |
 | ![Command palette](docs/screenshots/palette.png) | ![Settings with themes and accent colors](docs/screenshots/settings.png) |
 | **Ctrl+K** finds anything, runs any action, or acts on a pasted link. | **Settings**: dark / light / system, six accent colors, everything explained. |
 | ![Playlists](docs/screenshots/playlists.png) | ![Home in the light theme](docs/screenshots/home-light.png) |
@@ -70,15 +80,30 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
   tags**, subtitles, thumbnails, metadata, filename template, proxy and browser cookies.
 - Windows **notifications** and **taskbar progress**; on Android a progress notification and background downloads.
 
+**Find and revisit (Moments)**
+
+- **Search inside your videos**: find any word said in anything you downloaded and play it from that second.
+  "Quotes" find an exact phrase. Captions are read once and kept on your computer.
+- **Ask your library** (AI): questions answered from your own videos, every citation a button that plays the moment.
+- **Saved moments**: press **B** to bookmark a moment with a note; open it at that second, see it on the video,
+  export them all as Markdown with links to the exact second.
+- **Ctrl+K** also lists where a word is said.
+
 **Watch and organize**
 
 - **Stream** ad-free inside the app, with **picture-in-picture**, **theater mode** and **recently streamed**.
+- **SponsorBlock while watching**: sponsor reads, self-promotion and "like and subscribe" parts are skipped as they
+  come, with an undo (privacy-preserving hash-prefix lookups).
 - A **player** with up next, autoplay, shuffle, repeat, speed, **subtitles**, picture-in-picture, a
   **sleep timer** and YouTube-style shortcuts (press **?** to see them all). It **resumes** where you stopped.
+- Next to the video: a **live transcript** that follows playback (click a line to jump, filter it, copy it),
+  **chapters**, and your **moments**. Under it, a **map** of chapters, sponsor parts, moments and the loop.
+- **A–B loop** (**[** and **]**) and **save the looped part** as an MP4 clip, an animated GIF or an MP3;
+  **snapshots** of a frame (**S**); **copy a link to this exact second**.
 - A **Library** with *Continue watching*, favorites, watched / unwatched, channel filter, six sort orders,
   grid or list, and **multi-select** (play, add to a playlist, favorite, mark watched, delete).
 - **Playlists**: downloaded YouTube playlists in order, plus **your own** (create, rename, reorder, shuffle).
-- **Backup and restore**: favorites, progress, playlists, followed channels, AI feedback and settings in one file.
+- **Backup and restore**: favorites, progress, playlists, followed channels, moments, AI feedback and settings in one file.
 - **Make it yours**: dark, light or system theme and six accent colors (Crimson, Violet, Ocean, Emerald, Amber, Rose).
 
 **AI (optional, Ollama)**
@@ -88,6 +113,7 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 - **AI insights**: a streamed *TL;DW* of any video from its captions, with **clickable key moments**, and a chat
   to ask questions about it.
 - **Smart playlists**: the model sorts your library into themed playlists; you pick which ones to create.
+- **Ask your library**: questions answered from the transcripts of everything you saved, citing the moments.
 
 ### Keyboard shortcuts (desktop)
 
@@ -95,7 +121,7 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 | --- | --- |
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> | Command palette: search, paste a link, run any action |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste a YouTube link anywhere to open it |
-| <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>7</kbd> | Home, Discover, Stream, Download, Library, Playlists, Settings |
+| <kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>8</kbd> | Home, Discover, Stream, Download, Library, Playlists, Moments, Settings |
 | <kbd>Space</kbd> / <kbd>K</kbd> | Player: play / pause |
 | <kbd>J</kbd> / <kbd>L</kbd>, <kbd>←</kbd> / <kbd>→</kbd> | Player: back / forward 10 s, 5 s |
 | <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>M</kbd> | Player: volume, mute |
@@ -103,6 +129,9 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 | <kbd>Shift</kbd>+<kbd>.</kbd> / <kbd>Shift</kbd>+<kbd>,</kbd> | Player: faster / slower |
 | <kbd>C</kbd>, <kbd>I</kbd>, <kbd>F</kbd> | Player: subtitles, picture-in-picture, fullscreen |
 | <kbd>N</kbd> / <kbd>P</kbd>, <kbd>?</kbd> | Player: next / previous, all shortcuts |
+| <kbd>B</kbd> | Player and Stream: save this moment |
+| <kbd>[</kbd> / <kbd>]</kbd>, <kbd>\</kbd> | Player: loop from here / to here, stop looping |
+| <kbd>S</kbd>, <kbd>T</kbd> | Player: snapshot of the frame, show the transcript |
 
 ---
 
@@ -176,6 +205,38 @@ YouTube changes constantly, so an out-of-date yt-dlp is the most common cause of
 
 ---
 
+## Moments: search inside your videos
+
+Titles tell you what a video is called; Moments tells you what is *said* in it.
+
+```text
+download ──► captions read once ──► transcripts/  (on this computer)
+              subtitle file next to the download, else the video's captions on YouTube
+              (uploaded English first, then the spoken language, then anything)
+                     │
+   "kubernetes"  ────┼──► every line it is said in, across the library ──► click: play from that second
+   Ask a question ───┼──► best passages (BM25, ~45 s each) ──► AI answer citing [S2 04:31] ──► click: play it
+   Player ───────────┴──► live transcript that follows playback; click any line to jump
+```
+
+- **Make my library searchable** reads what you already have (two at a time, in the background; it stops by itself
+  when you are offline). New downloads are read automatically (Settings > General > *Make new downloads searchable*).
+  The `.info.json` saved with a download already lists its caption tracks, so YouTube is asked once instead of twice.
+  YouTube adds automatic captions some hours after an upload, so a recent download without captions is checked
+  again a day later.
+- Clips and downloads with sponsors cut out have a shorter timeline than the video on YouTube: their captions and
+  chapters are moved onto the file's own timeline (from the segments yt-dlp records in the `.info.json`), so every
+  timestamp still lands on the right moment.
+- Words match the start of words ("run" finds "running"), accents and case are ignored, and "quoted phrases" must
+  appear together (also across two caption lines). An MP4 and an MP3 of the same video share one transcript.
+- **Saved moments** (press **B**) keep the time, the title and your note. A moment of a downloaded file opens in the
+  player; of a streamed video, in the Stream tab. They are part of backups and export as Markdown:
+  `- [12:31](https://www.youtube.com/watch?v=…&t=751s) the part about indexes`.
+- **Ask your library** needs the AI set up (below). Only the passages that match the question are sent to the model,
+  not your library.
+
+---
+
 ## AI: Discover, summaries and smart playlists (Ollama)
 
 Everything AI is optional and off until you connect a model. It works the same on the desktop and on
@@ -239,9 +300,11 @@ same transcript, with timestamps. Videos without captions fall back to the descr
 ### What is sent where
 
 Only when you use an AI feature: your request; titles, channels, lengths and view counts of search
-results; (with Personalize) titles and channels from your library and your feedback; and the captions of
-videos you summarize or ask about. All of it goes to the server in Settings; web lookups go to Ollama web
-search. Nothing is sent in the background.
+results; (with Personalize) titles and channels from your library and your feedback; the captions of
+videos you summarize or ask about; and for *Ask your library*, your question and the transcript passages that
+match it. All of it goes to the server in Settings; web lookups go to Ollama web search. Nothing is sent in the
+background. (Not AI, but for completeness: reading captions for search goes through yt-dlp to YouTube, and
+SponsorBlock is asked by the first four characters of the SHA-256 of a video id, never the id itself.)
 
 ---
 
@@ -260,6 +323,10 @@ src/
     downloads.ts     queue, concurrency, live progress parsing, history persistence
     library.ts       scans the downloads folder and pairs sidecar thumbnails/metadata
     library-state.ts favorites, watch progress, your playlists and synced YouTube playlists (library-state.json)
+    transcript-index.ts captions of library items (subtitle files or YouTube), search across them (transcripts/)
+    moments.ts       saved moments with notes, Markdown export (moments.json)
+    sponsorblock.ts  SponsorBlock segments by hash prefix, for skipping while watching
+    clips.ts         A–B clips (MP4, GIF, MP3) and snapshots from downloaded files, with ffmpeg
     sync.ts          Sync of followed playlists / channels, and the auto-sync schedule
     backup.ts        backup file export and merge-on-import
     settings.ts      JSON-backed settings store
@@ -268,10 +335,11 @@ src/
       discover.ts      plan searches, YouTube filter encoding, search, filter, rank
       transcript.ts    caption track choice, WebVTT parsing, timestamped transcript for prompts
       insights.ts      summaries, questions about a video, smart playlists
+      library-qa.ts    Ask your library: BM25 over transcript passages, answers with citations
       taste.ts         thumbs up/down, hidden channels, recent requests (ai-taste.json)
   preload/         contextBridge API exposed as window.api
-  renderer/        React UI (Home / Discover / Stream / Download / Library / Playlists / Settings, player
-                   overlay, command palette, copied-link prompt, toasts with actions)
+  renderer/        React UI (Home / Discover / Stream / Download / Library / Playlists / Moments / Settings,
+                   player overlay with transcript and video map, command palette, copied-link prompt, toasts)
   shared/          types and IPC channel names used by both sides
 scripts/smoke.mjs  end-to-end UI test driven over the Chrome DevTools Protocol
 scripts/e2e/       end-to-end test with a fake yt-dlp, media host and Ollama (runs in CI)
@@ -352,6 +420,10 @@ node scripts/smoke.mjs
 | A clip or SponsorBlock option is greyed out | Both need ffmpeg: click **Install ffmpeg**. |
 | I paused a download and closed the app | It is still there as *paused*; **Resume** continues from the partial file. |
 | The copied-link prompt gets in the way | Settings > General > **Offer copied YouTube links** turns it off. |
+| Moments: a video is "without captions" | Neither YouTube nor a subtitle file has captions for it, so there is nothing to search. Turn on Settings > Downloads > **Download subtitles** for future downloads that have them. |
+| Moments: "not read yet" stays after indexing | Reading stopped (offline, or yt-dlp not installed yet). Click **Make my library searchable** again once you are back online; failed items are tried again right away. |
+| Save clip / Snapshot does nothing | Both need ffmpeg (**Install ffmpeg**). Clips land in *Clips*, snapshots in *Snapshots*, inside your downloads folder. |
+| A sponsor is skipped in the wrong place | The file was cut or is a clip, so its timeline differs: the player only skips when the file is as long as the video. Turn it off in Settings > General > **Skip sponsors while watching**. |
 
 Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg live in `%APPDATA%/YTD Studio/bin`.
 
@@ -360,8 +432,8 @@ Logs live in `%APPDATA%/YTD Studio/app.log`; the downloaded yt-dlp and ffmpeg li
 ## macOS app
 
 The desktop app runs on macOS 12 or newer, natively on Apple Silicon and Intel: the same Home, Discover,
-Stream, Download, Library, Playlists, Settings and AI features as on Windows. Shortcuts use <kbd>⌘</kbd>
-instead of <kbd>Ctrl</kbd> (⌘K, ⌘1 … ⌘7, ⌘V), the standard Mac menus are there, and closing the window keeps
+Stream, Download, Library, Playlists, Moments, Settings and AI features as on Windows. Shortcuts use <kbd>⌘</kbd>
+instead of <kbd>Ctrl</kbd> (⌘K, ⌘1 … ⌘8, ⌘V), the standard Mac menus are there, and closing the window keeps
 downloads running (click the Dock icon to bring it back).
 
 **Installing:** open the `.dmg` for your Mac (`mac-arm64` for Apple Silicon, `mac-x64` for Intel) and drag
@@ -560,7 +632,11 @@ progress and stages, history, library grouping, in-app streaming, whole-playlist
 folder and Sync, favorites, your own playlists and resume. A fake Ollama server covers the AI features:
 key handling, model pick, Discover's plan/search/filter/rank and feedback, streamed summaries with seeking
 key moments, questions, and smart playlists. It also covers Home's one-click downloads, pause and resume,
-the command palette, the copied-link prompt, clips with SponsorBlock, and subtitles served as WebVTT.
+the command palette, the copied-link prompt, clips with SponsorBlock, and subtitles served as WebVTT. And the
+2.1 features: reading the library's captions and searching them, a hit opening the player at that second with
+the live transcript, saving a moment with a note and exporting it as Markdown, an A–B loop saved as an MP4 clip
+(length checked with ffprobe), snapshots, Ask your library with clickable citations, and SponsorBlock skipping a
+segment while streaming (with a fake SponsorBlock server that checks only a hash prefix is sent).
 CI runs it on every push. The app runs against a throwaway data folder (`YTD_USER_DATA`), never yours.
 
 ## Screenshots
