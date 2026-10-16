@@ -76,6 +76,10 @@ jobs:
       - name: Build disk images
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # electron-builder skips signing on pull_request builds, leaving an unsigned app that the
+          # check below rejects. Only the ad-hoc identity is used (no certificates or secrets), so
+          # signing PR builds exposes nothing.
+          CSC_FOR_PULL_REQUEST: 'true'
         run: |
           pnpm build
           pnpm exec electron-builder --mac --publish never
