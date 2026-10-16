@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ArrowDownToLine, Download, House, Library, ListVideo, Play, Search, Settings as SettingsIcon, Sparkles } from 'lucide-react'
+import { ArrowDownToLine, Download, House, Library, ListVideo, Play, Search, Settings as SettingsIcon, Sparkles, TextSearch } from 'lucide-react'
 import type { AiStatus, AppInfo, TabId } from '@shared/types'
 import { MOD, ProgressBar, StatusDot } from './common'
 
@@ -28,12 +28,13 @@ const SECTIONS: { title: string; entries: NavEntry[] }[] = [
     entries: [
       { id: 'library', label: 'Library', icon: <Library size={17} />, key: '5' },
       { id: 'playlists', label: 'Playlists', icon: <ListVideo size={17} />, key: '6' },
+      { id: 'moments', label: 'Moments', icon: <TextSearch size={17} />, key: '7' },
     ],
   },
 ]
 
-/** Tab order for Ctrl+1..7. */
-export const TAB_ORDER: TabId[] = ['home', 'discover', 'stream', 'download', 'library', 'playlists', 'settings']
+/** Tab order for Ctrl+1..8. */
+export const TAB_ORDER: TabId[] = ['home', 'discover', 'stream', 'download', 'library', 'playlists', 'moments', 'settings']
 
 export default function Sidebar({
   tab,
@@ -46,6 +47,7 @@ export default function Sidebar({
   toolBusy,
   ytdlpUpdate,
   aiStatus,
+  momentCount,
   onOpenPalette,
 }: {
   tab: TabId
@@ -59,12 +61,14 @@ export default function Sidebar({
   toolBusy: boolean
   ytdlpUpdate: boolean
   aiStatus: AiStatus | null
+  momentCount: number
   onOpenPalette: () => void
 }): ReactNode {
   const badge = (id: TabId): ReactNode => {
     if (id === 'download' && activeDownloads > 0) return <span className="badge chip accent">{activeDownloads}</span>
     if (id === 'library' && libraryCount > 0) return <span className="badge chip">{libraryCount}</span>
     if (id === 'playlists' && playlistCount > 0) return <span className="badge chip">{playlistCount}</span>
+    if (id === 'moments' && momentCount > 0) return <span className="badge chip">{momentCount}</span>
     if (id === 'discover' && !aiStatus?.ready) return <span className="badge chip soft">AI</span>
     return null
   }
@@ -109,7 +113,7 @@ export default function Sidebar({
           </div>
         ))}
         <div className="nav-section">&nbsp;</div>
-        {item({ id: 'settings', label: 'Settings', icon: <SettingsIcon size={17} />, key: '7' })}
+        {item({ id: 'settings', label: 'Settings', icon: <SettingsIcon size={17} />, key: '8' })}
       </nav>
 
       <div className="sidebar-footer">

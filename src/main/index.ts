@@ -9,6 +9,8 @@ import { registerIpc } from './ipc'
 import { initLogger, log, logError } from './logger'
 import { libraryState } from './library-state'
 import { startMediaServer, stopMediaServer } from './media-server'
+import { flushMoments } from './moments'
+import { flushTranscripts, indexSoon } from './transcript-index'
 import { startAutoSync } from './sync'
 import { settings } from './settings'
 import { installYtdlp, resolveYtdlp } from './ytdlp'
@@ -189,7 +191,11 @@ async function bootstrap(): Promise<void> {
         updateTaskbar()
       }, 400)
     },
-    onFinish: notifyFinished,
+    onFinish: function (job) {
+      notifyFinished(job)
+      // New downloads become searchable by what is said in them.
+      if (job.status === 'completed' && job.outputPath && settings.get('indexTranscripts')) indexSoon(job.outputPath)
+    },
   })
   registerBroadcaster(function () {
     return BrowserWindow.getAllWindows().map(function (win) { return win.webContents })
@@ -224,6 +230,8 @@ if (!gotLock) {
 
   app.on('before-quit', function () {
     libraryState.flush()
+    flushMoments()
+    flushTranscripts()
   })
 
   // macOS keeps the app (and the queue) running with no window; the media server must stay up for the
@@ -234,6 +242,8 @@ if (!gotLock) {
 
   app.on('window-all-closed', function () {
     libraryState.flush()
+    flushMoments()
+    flushTranscripts()
     if (process.platform !== 'darwin') app.quit()
   })
 

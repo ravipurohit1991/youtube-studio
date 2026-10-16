@@ -1,8 +1,9 @@
 import { BrowserWindow, app, dialog } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
-import type { BackupSummary, LibraryState, Settings, TasteProfile } from '@shared/types'
+import type { BackupSummary, LibraryState, Moment, Settings, TasteProfile } from '@shared/types'
 import { replaceTaste, taste } from './ai/taste'
 import { libraryState } from './library-state'
+import { mergeMoments, moments } from './moments'
 import { settings } from './settings'
 
 /** Settings that describe this machine (folders, tool locations) are not carried between computers. */
@@ -15,15 +16,18 @@ interface BackupFile {
   settings: Partial<Settings>
   library: LibraryState
   taste: TasteProfile
+  /** Bookmarked moments with notes (since 2.1). */
+  moments?: Moment[]
 }
 
-function summary(path: string, library: LibraryState): BackupSummary {
+function summary(path: string, library: LibraryState, momentCount: number): BackupSummary {
   return {
     path,
     favorites: library.favorites.length,
     playlists: library.playlists.length,
     synced: library.saved.length,
     progress: Object.keys(library.progress).length,
+    moments: momentCount,
   }
 }
 
@@ -47,9 +51,10 @@ export async function exportBackup(): Promise<BackupSummary | null> {
     settings: all,
     library,
     taste: taste(),
+    moments: moments(),
   }
   writeFileSync(result.filePath, JSON.stringify(file, null, 2), 'utf8')
-  return summary(result.filePath, library)
+  return summary(result.filePath, library, file.moments?.length ?? 0)
 }
 
 /** Merge a backup into the current state: nothing that is already here is lost. */
@@ -77,5 +82,6 @@ export async function importBackup(): Promise<BackupSummary | null> {
   }
   const merged = libraryState.merge(parsed.library)
   if (parsed.taste) replaceTaste(parsed.taste, true)
-  return summary(path, merged)
+  mergeMoments(parsed.moments)
+  return summary(path, merged, moments().length)
 }

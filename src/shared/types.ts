@@ -1,6 +1,6 @@
 /** Shared types used by the main process, preload bridge and renderer UI. */
 
-export type TabId = 'home' | 'discover' | 'stream' | 'download' | 'library' | 'playlists' | 'settings'
+export type TabId = 'home' | 'discover' | 'stream' | 'download' | 'library' | 'playlists' | 'moments' | 'settings'
 export type DownloadMode = 'video_audio' | 'audio_only'
 export type AudioFormat = 'mp3' | 'm4a' | 'opus' | 'wav' | 'flac'
 export type AudioQuality = '0' | '2' | '5'
@@ -145,6 +145,13 @@ export interface LibraryItem {
   folder: string | null
   /** Subtitle files next to it, served as WebVTT for the player. */
   subtitles: SubtitleTrack[]
+  /** Chapters from the video's metadata, in order (empty when it has none). */
+  chapters: Chapter[]
+}
+
+export interface Chapter {
+  start: number
+  title: string
 }
 
 export interface SubtitleTrack {
@@ -242,6 +249,10 @@ export interface Settings {
   autoSyncHours: number
   /** Which video codec downloads prefer. */
   videoCodec: VideoCodec
+  /** Skip sponsor segments while watching (SponsorBlock), in the Stream tab and the player. */
+  skipSponsorsLive: boolean
+  /** Make new downloads searchable by what is said in them (fetches their captions in the background). */
+  indexTranscripts: boolean
 }
 
 export type ToastTone = 'info' | 'success' | 'error'
@@ -259,6 +270,7 @@ export interface BackupSummary {
   playlists: number
   synced: number
   progress: number
+  moments: number
 }
 
 export interface ToolStatus {
@@ -496,6 +508,147 @@ export interface AiProgress {
   delta?: string
   thinking?: boolean
   source?: InsightSource
+  /** Ask your library: the transcript passages the answer is based on (sent before the answer streams). */
+  sources?: LibrarySource[]
+}
+
+/* ---------- Ask your library ---------- */
+
+export interface LibraryAskRequest {
+  requestId: string
+  question: string
+  history?: { role: 'user' | 'assistant'; content: string }[]
+}
+
+/** One passage the answer may cite as [S1 12:34]. */
+export interface LibrarySource {
+  ref: string
+  key: string
+  title: string
+  videoId: string | null
+  start: number
+}
+
+export interface LibraryAnswer {
+  requestId: string
+  text: string
+  sources: LibrarySource[]
+  /** The words the passages were looked up with. */
+  keywords: string[]
+  model: string
+}
+
+/* ---------- Transcripts: search what is said ---------- */
+
+export interface TranscriptLine {
+  start: number
+  text: string
+}
+
+export interface Transcript {
+  videoId: string | null
+  /** Caption language code, e.g. "en" or "de-orig". */
+  lang: string | null
+  /** YouTube's automatic (speech recognition) captions. */
+  auto: boolean
+  /** Subtitle files next to the download, or captions fetched from YouTube. */
+  source: 'subtitles' | 'youtube'
+  lines: TranscriptLine[]
+}
+
+export interface TranscriptIndexStatus {
+  /** Library items. */
+  total: number
+  /** Items with a searchable transcript. */
+  indexed: number
+  /** Items checked that have no captions. */
+  missing: number
+  /** Items not checked yet (or whose last check failed). */
+  pending: number
+  running: boolean
+  /** Title being read right now. */
+  current: string | null
+  /** Progress of the current run. */
+  done: number
+  queued: number
+}
+
+export interface TranscriptHit {
+  start: number
+  text: string
+}
+
+export interface TranscriptMatch {
+  key: string
+  title: string
+  videoId: string | null
+  /** The best hits, in order of time. */
+  hits: TranscriptHit[]
+  /** All hits in this item (can be more than hits.length). */
+  total: number
+}
+
+export interface TranscriptSearchResult {
+  query: string
+  /** What was looked for, lower case: words and "exact phrases". */
+  terms: string[]
+  matches: TranscriptMatch[]
+  totalHits: number
+  /** Transcripts searched. */
+  searched: number
+  elapsedMs: number
+}
+
+/* ---------- Moments: bookmarks with notes ---------- */
+
+export interface Moment {
+  id: string
+  /** Library item it belongs to, or null for a streamed video. */
+  key: string | null
+  videoId: string | null
+  /** YouTube link (also kept for library items, so a moment still opens after the file is gone). */
+  url: string | null
+  title: string
+  channel: string | null
+  /** Seconds into the video. */
+  at: number
+  note: string
+  createdAt: number
+}
+
+export type MomentInput = Omit<Moment, 'id' | 'createdAt'>
+
+/* ---------- SponsorBlock while watching ---------- */
+
+export interface SkipSegment {
+  start: number
+  end: number
+  /** sponsor, selfpromo, interaction, intro, outro... */
+  category: string
+}
+
+/* ---------- Clips and snapshots from downloaded files ---------- */
+
+export type ClipFormat = 'mp4' | 'gif' | 'mp3'
+
+export interface ClipRequest {
+  absPath: string
+  start: number
+  end: number
+  format: ClipFormat
+  /** Used for the file name. */
+  title?: string | null
+}
+
+export interface SnapshotRequest {
+  absPath: string
+  at: number
+  title?: string | null
+}
+
+export interface SavedFile {
+  path: string
+  size: number
 }
 
 export interface TasteItem {
@@ -582,9 +735,32 @@ export interface DesktopApi {
   aiCancel(requestId: string): Promise<IpcResult<true>>
   aiTaste(): Promise<IpcResult<TasteProfile>>
   aiTasteUpdate(action: TasteAction): Promise<IpcResult<TasteProfile>>
+  /** Answer a question from the transcripts of everything in the library, citing the moments. */
+  aiAskLibrary(req: LibraryAskRequest): Promise<IpcResult<LibraryAnswer>>
+  transcriptStatus(): Promise<IpcResult<TranscriptIndexStatus>>
+  /** Start reading the captions of every library item that has not been read yet (runs in the background). */
+  transcriptIndex(): Promise<IpcResult<TranscriptIndexStatus>>
+  transcriptCancel(): Promise<IpcResult<TranscriptIndexStatus>>
+  /** The transcript of a library item, read on demand when it is not indexed yet. Null: no captions. */
+  transcriptGet(key: string): Promise<IpcResult<Transcript | null>>
+  /** The transcript of any YouTube video (Stream tab). Null: no captions. */
+  transcriptForUrl(url: string): Promise<IpcResult<Transcript | null>>
+  transcriptSearch(query: string, limit?: number): Promise<IpcResult<TranscriptSearchResult>>
+  momentsList(): Promise<IpcResult<Moment[]>>
+  momentAdd(input: MomentInput): Promise<IpcResult<Moment>>
+  momentUpdate(id: string, note: string): Promise<IpcResult<Moment[]>>
+  momentRemove(id: string): Promise<IpcResult<Moment[]>>
+  /** Save all moments (or one video's) as a Markdown file. Null when canceled. */
+  momentsExport(filter?: { key?: string | null; videoId?: string | null }): Promise<IpcResult<string | null>>
+  /** Sponsor segments of a video from SponsorBlock (empty when there are none or it is unreachable). */
+  sponsorSegments(videoId: string): Promise<IpcResult<SkipSegment[]>>
+  exportClip(req: ClipRequest): Promise<IpcResult<SavedFile>>
+  snapshot(req: SnapshotRequest): Promise<IpcResult<SavedFile>>
   onAiProgress(cb: (progress: AiProgress) => void): () => void
   onLibraryState(cb: (state: LibraryState) => void): () => void
   onJobProgress(cb: (payload: JobProgressPayload) => void): () => void
   onToolStatus(cb: (status: UpdateStatus) => void): () => void
   onToast(cb: (toast: ToastPayload) => void): () => void
+  onTranscriptStatus(cb: (status: TranscriptIndexStatus) => void): () => void
+  onMoments(cb: (moments: Moment[]) => void): () => void
 }

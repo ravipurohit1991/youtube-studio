@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { AiProgress, DesktopApi, JobProgressPayload, LibraryState, ToastPayload, UpdateStatus } from '@shared/types'
+import type { AiProgress, DesktopApi, JobProgressPayload, LibraryState, Moment, ToastPayload, TranscriptIndexStatus, UpdateStatus } from '@shared/types'
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   return ipcRenderer.invoke(channel, ...args) as Promise<T>
@@ -66,6 +66,21 @@ const api: DesktopApi = {
   aiCancel: (requestId) => invoke(IPC.aiCancel, requestId),
   aiTaste: () => invoke(IPC.aiTaste),
   aiTasteUpdate: (action) => invoke(IPC.aiTasteUpdate, action),
+  aiAskLibrary: (req) => invoke(IPC.aiAskLibrary, req),
+  transcriptStatus: () => invoke(IPC.transcriptStatus),
+  transcriptIndex: () => invoke(IPC.transcriptIndex),
+  transcriptCancel: () => invoke(IPC.transcriptCancel),
+  transcriptGet: (key) => invoke(IPC.transcriptGet, key),
+  transcriptForUrl: (url) => invoke(IPC.transcriptForUrl, url),
+  transcriptSearch: (query, limit) => invoke(IPC.transcriptSearch, query, limit),
+  momentsList: () => invoke(IPC.momentsList),
+  momentAdd: (input) => invoke(IPC.momentAdd, input),
+  momentUpdate: (id, note) => invoke(IPC.momentUpdate, id, note),
+  momentRemove: (id) => invoke(IPC.momentRemove, id),
+  momentsExport: (filter) => invoke(IPC.momentsExport, filter),
+  sponsorSegments: (videoId) => invoke(IPC.sponsorSegments, videoId),
+  exportClip: (req) => invoke(IPC.clipExport, req),
+  snapshot: (req) => invoke(IPC.clipSnapshot, req),
   onAiProgress: (cb) => {
     const listener = (_event: IpcRendererEvent, payload: AiProgress): void => cb(payload)
     ipcRenderer.on(IPC.aiProgress, listener)
@@ -92,6 +107,20 @@ const api: DesktopApi = {
     ipcRenderer.on(IPC.notifyToast, listener)
     return function () {
       ipcRenderer.removeListener(IPC.notifyToast, listener)
+    }
+  },
+  onTranscriptStatus: (cb) => {
+    const listener = (_event: IpcRendererEvent, payload: TranscriptIndexStatus): void => cb(payload)
+    ipcRenderer.on(IPC.transcriptStatusChanged, listener)
+    return function () {
+      ipcRenderer.removeListener(IPC.transcriptStatusChanged, listener)
+    }
+  },
+  onMoments: (cb) => {
+    const listener = (_event: IpcRendererEvent, payload: Moment[]): void => cb(payload)
+    ipcRenderer.on(IPC.momentsChanged, listener)
+    return function () {
+      ipcRenderer.removeListener(IPC.momentsChanged, listener)
     }
   },
   onToolStatus: (cb) => {

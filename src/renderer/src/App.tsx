@@ -22,10 +22,12 @@ import {
   Settings as SettingsIcon,
   SlidersHorizontal,
   Sparkles,
+  StickyNote,
   Sun,
+  TextSearch,
   TriangleAlert,
 } from 'lucide-react'
-import type { AccentName, AiStatus, AppInfo, DownloadJob, DownloadMode, JobStatus, LibraryItem, LibraryState, SavedPlaylist, Settings, TabId, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
+import type { AccentName, AiStatus, AppInfo, DownloadJob, DownloadMode, JobStatus, LibraryItem, LibraryState, Moment, SavedPlaylist, Settings, TabId, TranscriptIndexStatus, UpdateStatus, YtdlpUpdateInfo } from '@shared/types'
 import AddToPlaylist from './components/AddToPlaylist'
 import ClipboardPrompt from './components/ClipboardPrompt'
 import CommandPalette, { type PaletteCommand } from './components/CommandPalette'
@@ -35,6 +37,7 @@ import SmartPlaylists from './components/SmartPlaylists'
 import PlaylistsTab from './components/PlaylistsTab'
 import DownloadTab from './components/DownloadTab'
 import LibraryTab from './components/LibraryTab'
+import MomentsTab from './components/MomentsTab'
 import PlayerOverlay from './components/PlayerOverlay'
 import SettingsTab from './components/SettingsTab'
 import Sidebar, { TAB_ORDER } from './components/Sidebar'
@@ -42,7 +45,7 @@ import StreamTab from './components/StreamTab'
 import Toasts from './components/Toasts'
 import { Kbd } from './components/common'
 import { errorMessage, unwrap } from './lib/api'
-import { findYouTubeUrl, looksLikeCollection } from './lib/format'
+import { findYouTubeUrl, formatDuration, looksLikeCollection } from './lib/format'
 import { makeQueue, stepped, withShuffle } from './lib/queue'
 import type { DownloadDraft, LinkDraft, PlayQueue, PushToast, StreamDraft, ToastItem } from './lib/types'
 
@@ -53,10 +56,12 @@ const TAB_TITLES: Record<TabId, { title: string; sub: string }> = {
   download: { title: 'Download', sub: 'Save the whole video (with audio) or just the audio. Follow playlists and channels.' },
   library: { title: 'Library', sub: 'Everything you downloaded: pick up where you left off, favorite, sort into playlists.' },
   playlists: { title: 'Playlists', sub: 'Downloaded YouTube playlists (kept in sync if you like) and playlists you made.' },
+  moments: { title: 'Moments', sub: 'Search what is said in everything you saved, ask your library, and revisit bookmarked moments.' },
   settings: { title: 'Settings', sub: 'Make it yours: look, downloads, playback, AI and the tools behind the app.' },
 }
 
 const ACCENT_NAMES: AccentName[] = ['crimson', 'violet', 'ocean', 'emerald', 'amber', 'rose']
+
 
 function TabPanel({ id, active, children }: { id: TabId; active: boolean; children: ReactNode }): ReactNode {
   // Panels stay mounted so a playing stream keeps playing while you browse other tabs.
@@ -104,6 +109,9 @@ export default function App(): ReactNode {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [clipUrl, setClipUrl] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [moments, setMoments] = useState<Moment[]>([])
+  const [transcriptStatus, setTranscriptStatus] = useState<TranscriptIndexStatus | null>(null)
+  const [momentsQuery, setMomentsQuery] = useState<{ text: string; nonce: number; mode?: 'search' | 'ask' } | null>(null)
   const toastId = useRef(0)
   const lastDir = useRef('')
   const lastClip = useRef<string | null>(null)
@@ -168,13 +176,15 @@ export default function App(): ReactNode {
     let cancelled = false
     const boot = async (): Promise<void> => {
       try {
-        const [appInfo, jobList, state, ai] = await Promise.all([
+        const [appInfo, jobList, state, ai, saved] = await Promise.all([
           unwrap(window.api.getAppInfo()),
           unwrap(window.api.listJobs()),
           unwrap(window.api.getLibraryState()),
           unwrap(window.api.aiStatus()).catch(() => null),
+          unwrap(window.api.momentsList()).catch(() => [] as Moment[]),
         ])
         if (cancelled) return
+        setMoments(saved)
         setAiStatus(ai)
         setLibState(state)
         setInfo(appInfo)
@@ -262,6 +272,8 @@ export default function App(): ReactNode {
       if (payload.job.status === 'completed') setLibraryStale(true)
     })
     const offLib = window.api.onLibraryState((state) => setLibState(state))
+    const offMoments = window.api.onMoments((list) => setMoments(list))
+    const offTranscripts = window.api.onTranscriptStatus((status) => setTranscriptStatus(status))
     const offToast = window.api.onToast((toast) => pushToast(toast.message, toast.tone, { actions: [{ label: 'View queue', onClick: () => changeTab('download') }] }))
     let clearTimer = 0
     const offTool = window.api.onToolStatus((status) => {
@@ -276,6 +288,8 @@ export default function App(): ReactNode {
     return () => {
       off()
       offLib()
+      offMoments()
+      offTranscripts()
       offToast()
       offTool()
       window.clearTimeout(clearTimer)
@@ -283,10 +297,16 @@ export default function App(): ReactNode {
   }, [refreshTools, onJobChange, pushToast, changeTab])
 
   useEffect(() => {
-    if (tab !== 'library' && tab !== 'playlists' && tab !== 'home') return
+    if (tab !== 'library' && tab !== 'playlists' && tab !== 'home' && tab !== 'moments') return
     if (libraryLoaded && !libraryStale) return
     void scanLibrary()
   }, [tab, libraryLoaded, libraryStale, scanLibrary])
+
+  // How much of the library is searchable, refreshed whenever the library changes.
+  useEffect(() => {
+    if (!libraryLoaded) return
+    void unwrap(window.api.transcriptStatus()).then(setTranscriptStatus).catch(() => undefined)
+  }, [libraryLoaded, library])
 
   useEffect(() => {
     const mode = settings?.theme ?? 'dark'
@@ -370,6 +390,21 @@ export default function App(): ReactNode {
     setPlayQueue((previous) => makeQueue(list, index, shuffle, previous?.repeat ?? 'off'))
   }, [])
 
+  /** Play one library item from a given second (a search hit, a citation, a saved moment). */
+  const playAt = useCallback(
+    async (key: string, at: number) => {
+      let item = libraryRef.current.find((entry) => entry.key === key)
+      if (!item) item = (await scanLibrary()).find((entry) => entry.key === key)
+      if (!item) {
+        pushToast('That file is no longer in your library.', 'error')
+        return
+      }
+      const found = item
+      setPlayQueue((previous) => ({ ...makeQueue([found], 0, false, previous?.repeat ?? 'off'), startAt: { key, at: Math.max(0, at), nonce: Date.now() } }))
+    },
+    [scanLibrary, pushToast],
+  )
+
   const stepQueue = useCallback((delta: number) => {
     setPlayQueue((previous) => (previous ? stepped(previous, delta) ?? previous : previous))
   }, [])
@@ -405,6 +440,41 @@ export default function App(): ReactNode {
     setStreamDraft({ url, startAt, audioOnly, nonce: Date.now() })
     changeTab('stream')
   }, [changeTab])
+
+  /** A saved moment opens in the player when the file is still there, else streams from YouTube. */
+  const openMoment = useCallback(
+    (moment: Moment) => {
+      if (moment.key && libraryRef.current.some((entry) => entry.key === moment.key)) void playAt(moment.key, moment.at)
+      else if (moment.url) playInStream(moment.url, moment.at)
+      else pushToast('The file of this moment is gone and it has no YouTube link.', 'error')
+    },
+    [playAt, playInStream, pushToast],
+  )
+
+  const searchInside = useCallback((text: string) => {
+    setMomentsQuery({ text, nonce: Date.now() })
+    changeTab('moments')
+  }, [changeTab])
+
+  const indexLibrary = useCallback(async () => {
+    try {
+      const status = await unwrap(window.api.transcriptIndex())
+      setTranscriptStatus(status)
+      if (!status.running) pushToast('Everything that has captions is already searchable.', 'info')
+      else pushToast('Reading the captions of ' + status.queued + ' item(s) in the background.', 'info', { actions: [{ label: 'Open Moments', onClick: () => changeTab('moments') }] })
+    } catch (err) {
+      pushToast(errorMessage(err), 'error')
+    }
+  }, [pushToast, changeTab])
+
+  const exportMoments = useCallback(async () => {
+    try {
+      const path = await unwrap(window.api.momentsExport())
+      if (path) pushToast('Moments exported.', 'success', { actions: [{ label: 'Show in folder', onClick: () => void window.api.revealPath(path) }] })
+    } catch (err) {
+      pushToast(errorMessage(err), 'error')
+    }
+  }, [pushToast])
 
   const openOnHome = useCallback((url: string) => {
     setLinkDraft({ url, nonce: Date.now() })
@@ -486,7 +556,7 @@ export default function App(): ReactNode {
           setLibState(await unwrap(window.api.getLibraryState()))
         }
         pushToast(
-          (kind === 'export' ? 'Backup saved' : 'Backup restored') + ': ' + result.favorites + ' favorites, ' + result.playlists + ' playlists, ' + result.synced + ' followed.',
+          (kind === 'export' ? 'Backup saved' : 'Backup restored') + ': ' + result.favorites + ' favorites, ' + result.playlists + ' playlists, ' + result.synced + ' followed, ' + result.moments + ' moments.',
           'success',
         )
       } catch (err) {
@@ -496,7 +566,7 @@ export default function App(): ReactNode {
     [pushToast],
   )
 
-  // Ctrl+K palette, Ctrl+1..7 tabs, Ctrl+V anywhere outside a text field opens a YouTube link.
+  // Ctrl+K palette, Ctrl+1..8 tabs, Ctrl+V anywhere outside a text field opens a YouTube link.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return
@@ -504,7 +574,7 @@ export default function App(): ReactNode {
       if (key === 'k') {
         event.preventDefault()
         setPaletteOpen((open) => !open)
-      } else if (/^[1-7]$/.test(key) && !playQueue) {
+      } else if (/^[1-8]$/.test(key) && !playQueue) {
         event.preventDefault()
         changeTab(TAB_ORDER[Number(key) - 1])
       } else if (key === ',') {
@@ -603,7 +673,7 @@ export default function App(): ReactNode {
       group: 'Go to',
       label: TAB_TITLES[id].title,
       keywords: TAB_TITLES[id].sub,
-      icon: id === 'home' ? <House size={16} /> : id === 'discover' ? <Sparkles size={16} /> : id === 'stream' ? <Play size={16} /> : id === 'download' ? <Download size={16} /> : id === 'library' ? <Library size={16} /> : id === 'playlists' ? <ListVideo size={16} /> : <SettingsIcon size={16} />,
+      icon: id === 'home' ? <House size={16} /> : id === 'discover' ? <Sparkles size={16} /> : id === 'stream' ? <Play size={16} /> : id === 'download' ? <Download size={16} /> : id === 'library' ? <Library size={16} /> : id === 'playlists' ? <ListVideo size={16} /> : id === 'moments' ? <TextSearch size={16} /> : <SettingsIcon size={16} />,
       meta: <Kbd keys={'Ctrl+' + (index + 1)} />,
       run: () => changeTab(id),
     }))
@@ -617,6 +687,10 @@ export default function App(): ReactNode {
       { id: 'open-folder', group: 'Actions', label: 'Open the downloads folder', keywords: 'explorer files', icon: <FolderOpen size={16} />, run: () => settings && void window.api.openPath(settings.downloadsDir) },
       { id: 'rescan', group: 'Actions', label: 'Rescan the library', icon: <RefreshCw size={16} />, run: () => void scanLibrary() },
       { id: 'smart', group: 'Actions', label: 'Make smart playlists with AI', icon: <Sparkles size={16} />, run: openSmartPlaylists },
+      { id: 'search-inside', group: 'Actions', label: 'Search inside your videos', keywords: 'transcript captions spoken words find said', icon: <TextSearch size={16} />, run: () => searchInside('') },
+      { id: 'index', group: 'Actions', label: 'Make my library searchable', keywords: 'transcripts captions index read', icon: <TextSearch size={16} />, run: () => void indexLibrary() },
+      { id: 'ask-library', group: 'Actions', label: 'Ask your library (AI)', keywords: 'question answer transcripts', icon: <Sparkles size={16} />, run: () => { setMomentsQuery({ text: '', nonce: Date.now(), mode: 'ask' }); changeTab('moments') } },
+      { id: 'export-moments', group: 'Actions', label: 'Export saved moments as Markdown', keywords: 'bookmarks notes', icon: <StickyNote size={16} />, run: () => void exportMoments() },
       { id: 'theme', group: 'Look', label: dark ? 'Switch to light theme' : 'Switch to dark theme', keywords: 'appearance mode', icon: dark ? <Sun size={16} /> : <Moon size={16} />, run: () => void updateSettings({ theme: dark ? 'light' : 'dark' }) },
       ...ACCENT_NAMES.map<PaletteCommand>((accent) => ({
         id: 'accent:' + accent,
@@ -632,7 +706,30 @@ export default function App(): ReactNode {
       { id: 'restore', group: 'Maintenance', label: 'Restore a backup', keywords: 'import', icon: <ArchiveRestore size={16} />, run: () => void backup('import') },
     ]
     return [...nav, ...actions]
-  }, [changeTab, pasteLink, bulk, syncAll, settings, scanLibrary, openSmartPlaylists, updateSettings, checkForUpdate, pushToast, backup])
+  }, [changeTab, pasteLink, bulk, syncAll, settings, scanLibrary, openSmartPlaylists, updateSettings, checkForUpdate, pushToast, backup, searchInside, indexLibrary, exportMoments])
+
+  // Ctrl+K also finds what is said in your videos.
+  const searchSpoken = useCallback(
+    async (query: string): Promise<PaletteCommand[]> => {
+      const found = await unwrap(window.api.transcriptSearch(query, 4))
+      const list: PaletteCommand[] = found.matches.slice(0, 4).map((match) => {
+        const hit = match.hits[0]
+        return {
+          id: 'said:' + match.key,
+          group: 'Said in your videos',
+          label: '“' + (hit.text.length > 90 ? hit.text.slice(0, 88) + '…' : hit.text) + '”',
+          icon: <TextSearch size={16} />,
+          meta: (match.title.length > 26 ? match.title.slice(0, 24) + '…' : match.title) + ' · ' + formatDuration(hit.start),
+          run: () => void playAt(match.key, Math.max(0, hit.start - 1)),
+        }
+      })
+      if (found.totalHits > list.length) {
+        list.push({ id: 'said:all', group: 'Said in your videos', label: 'All ' + found.totalHits + ' mentions of "' + query + '"', icon: <Search size={16} />, run: () => searchInside(query) })
+      }
+      return list
+    },
+    [playAt, searchInside],
+  )
 
   const linkCommands = useCallback(
     (url: string): PaletteCommand[] => {
@@ -680,6 +777,7 @@ export default function App(): ReactNode {
         toolBusy={installing}
         ytdlpUpdate={!!(updateInfo && updateInfo.updateAvailable)}
         aiStatus={aiStatus}
+        momentCount={moments.length}
         onOpenPalette={() => setPaletteOpen(true)}
       />
       <div className="main">
@@ -784,6 +882,8 @@ export default function App(): ReactNode {
             draft={streamDraft}
             aiReady={!!aiStatus?.ready}
             onOpenAiSettings={openAiSettings}
+            active={tab === 'stream' && !playQueue && !paletteOpen}
+            moments={moments}
           />
         </TabPanel>
         <TabPanel id="download" active={tab === 'download'}>
@@ -832,6 +932,19 @@ export default function App(): ReactNode {
             onSmartPlaylists={openSmartPlaylists}
           />
         </TabPanel>
+        <TabPanel id="moments" active={tab === 'moments'}>
+          <MomentsTab
+            library={library}
+            moments={moments}
+            status={transcriptStatus}
+            aiStatus={aiStatus}
+            pushToast={pushToast}
+            onPlayAt={(key, at) => void playAt(key, at)}
+            onOpenMoment={openMoment}
+            onOpenAiSettings={openAiSettings}
+            query={momentsQuery}
+          />
+        </TabPanel>
         <TabPanel id="settings" active={tab === 'settings'}>
           <SettingsTab
             info={info}
@@ -857,7 +970,10 @@ export default function App(): ReactNode {
         <PlayerOverlay
           queue={playQueue}
           libState={libState}
-          resume={settings.resumePlayback}
+          settings={settings}
+          moments={moments}
+          ffmpegOk={info.ffmpeg.ok}
+          pushToast={pushToast}
           onClose={closePlayer}
           onStep={stepQueue}
           onJump={(pos) => setPlayQueue((previous) => (previous ? { ...previous, pos } : previous))}
@@ -885,6 +1001,7 @@ export default function App(): ReactNode {
           library={library}
           onPlayItem={(item) => playItems([item], 0)}
           onClose={() => setPaletteOpen(false)}
+          searchMore={searchSpoken}
         />
       ) : null}
 

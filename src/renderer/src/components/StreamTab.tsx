@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  BookmarkPlus,
+  Captions,
   ClipboardPaste,
   Copy,
   Download,
@@ -12,17 +14,22 @@ import {
   Play,
   RectangleHorizontal,
   SlidersHorizontal,
+  StickyNote,
   Trash2,
   TriangleAlert,
   X,
 } from 'lucide-react'
-import type { DownloadMode, Settings, StreamSession } from '@shared/types'
+import type { DownloadMode, Moment, Settings, StreamSession, Transcript } from '@shared/types'
 import { errorMessage, unwrap } from '../lib/api'
 import { formatDuration, isYouTubeUrl, timeAgo, ytThumb } from '../lib/format'
+import { SEGMENT_LABELS, useMediaDuration, useMediaTime, useSponsorSkip } from '../lib/media'
 import { clearStreamHistory, rememberStream, streamHistory, usePref, type StreamHistoryEntry } from '../lib/prefs'
 import type { PushToast, StreamDraft } from '../lib/types'
 import { EmptyState, LoadingRow, hideBroken } from './common'
 import InsightPanel from './InsightPanel'
+import MomentRow from './MomentRow'
+import Timeline from './Timeline'
+import TranscriptView from './TranscriptView'
 
 interface Props {
   settings: Settings
@@ -33,9 +40,12 @@ interface Props {
   draft: StreamDraft | null
   aiReady: boolean
   onOpenAiSettings: () => void
+  /** The tab is in front (and no player covers it): its keyboard shortcuts are live. */
+  active: boolean
+  moments: Moment[]
 }
 
-export default function StreamTab({ settings, pushToast, onDownload, onQuickDownload, draft, aiReady, onOpenAiSettings }: Props): ReactNode {
+export default function StreamTab({ settings, pushToast, onDownload, onQuickDownload, draft, aiReady, onOpenAiSettings, active, moments }: Props): ReactNode {
   const [url, setUrl] = useState('')
   const [session, setSession] = useState<StreamSession | null>(null)
   const [loading, setLoading] = useState(false)
@@ -50,6 +60,16 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
   const handledDraft = useRef(0)
   // The video the AI panel is about; it survives quality switches (which briefly clear the session).
   const [insightUrl, setInsightUrl] = useState<string | null>(null)
+  // The element that keeps time: the video, or the audio when there is no picture.
+  const [clock, setClock] = useState<HTMLMediaElement | null>(null)
+  const [sideTab, setSideTab] = usePref<'transcript' | 'moments'>('stream.side', 'transcript')
+  const [showTranscript, setShowTranscript] = usePref('stream.transcript', false)
+  const [transcript, setTranscript] = useState<{ videoId: string; loading: boolean; error: string | null; data: Transcript | null } | null>(null)
+  const [focusMoment, setFocusMoment] = useState<string | null>(null)
+  const time = useMediaTime(clock)
+  const duration = useMediaDuration(clock)
+  const sponsor = useSponsorSkip(clock, session?.videoId ?? null, settings.skipSponsorsLive)
+  const videoMoments = session ? moments.filter((m) => m.videoId === session.videoId).sort((a, b) => a.at - b.at) : []
 
   useEffect(() => {
     const refresh = (): void => setHistory(streamHistory())
@@ -124,6 +144,20 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
     void load({ target: draft.url, audioOnly: !!draft.audioOnly })
   }, [draft, load])
 
+  useEffect(() => {
+    setClock(session ? videoRef.current ?? audioRef.current : null)
+  }, [session?.sessionId])
+
+  // The transcript of the video playing (read once per video, when the transcript is shown).
+  useEffect(() => {
+    if (!session || !showTranscript || sideTab !== 'transcript' || transcript?.videoId === session.videoId) return
+    const videoId = session.videoId
+    setTranscript({ videoId, loading: true, error: null, data: null })
+    void unwrap(window.api.transcriptForUrl(session.pageUrl))
+      .then((data) => setTranscript((prev) => (prev?.videoId === videoId ? { videoId, loading: false, error: null, data } : prev)))
+      .catch((err) => setTranscript((prev) => (prev?.videoId === videoId ? { videoId, loading: false, error: 'Could not read the captions: ' + errorMessage(err), data: null } : prev)))
+  }, [session, showTranscript, sideTab, transcript?.videoId])
+
   const seek = useCallback((seconds: number) => {
     const media = videoRef.current ?? audioRef.current
     if (!media) return
@@ -131,6 +165,44 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
     void media.play().catch(() => undefined)
     media.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [])
+
+  const saveMoment = useCallback(async () => {
+    const media = videoRef.current ?? audioRef.current
+    if (!media || !session) return
+    try {
+      const moment = await unwrap(
+        window.api.momentAdd({
+          key: null,
+          videoId: session.videoId,
+          url: 'https://www.youtube.com/watch?v=' + session.videoId,
+          title: session.title,
+          channel: session.uploader,
+          at: media.currentTime,
+          note: '',
+        }),
+      )
+      setShowTranscript(true)
+      setSideTab('moments')
+      setFocusMoment(moment.id)
+      pushToast('Moment saved at ' + formatDuration(moment.at) + '. Add a note if you like.', 'success', { duration: 2600 })
+    } catch (err) {
+      pushToast(errorMessage(err), 'error')
+    }
+  }, [session, pushToast, setShowTranscript, setSideTab])
+
+  // B saves a moment while the Stream tab is in front.
+  useEffect(() => {
+    if (!active || !session) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (event.ctrlKey || event.metaKey || event.altKey || event.key.toLowerCase() !== 'b') return
+      event.preventDefault()
+      void saveMoment()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [active, session, saveMoment])
 
   const separateAudio = !!session?.separateAudio && !!session.video && !!session.audio
 
@@ -344,7 +416,14 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
                   <audio key={session.sessionId} ref={audioRef} src={session.audio.url} controls autoPlay />
                 </div>
               ) : null}
+              {sponsor.skipped ? (
+                <span className="chip skip-chip">
+                  Skipped {SEGMENT_LABELS[sponsor.skipped.category] ?? sponsor.skipped.category}
+                  <button type="button" className="link-btn" onClick={sponsor.undo}>Watch it</button>
+                </span>
+              ) : null}
             </div>
+            <Timeline duration={duration} time={time} segments={sponsor.segments} moments={videoMoments} onSeek={seek} />
             <div className="stream-info">
               <div style={{ minWidth: 0, flex: 1 }}>
                 <h2>{session.title}</h2>
@@ -354,9 +433,14 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
                   <span className="chip">{session.formatLabel}</span>
                   {separateAudio ? <span className="chip">video + audio synced</span> : null}
                   <span className="chip ok">ad-free</span>
+                  {sponsor.segments.length ? <span className="chip ok" title="SponsorBlock: these parts are skipped as they come">{sponsor.segments.length === 1 ? 'Skips 1 sponsor part' : 'Skips ' + sponsor.segments.length + ' sponsor parts'}</span> : null}
                 </div>
               </div>
               <div className="row tight nowrap">
+                <button type="button" className="btn small" onClick={() => void saveMoment()} title="Save this moment (B)">
+                  <BookmarkPlus size={15} />
+                  <span>Save moment</span>
+                </button>
                 {session.video ? (
                   <>
                     <button type="button" className="btn small ghost" onClick={() => void togglePip()} title="Picture-in-picture">
@@ -375,6 +459,45 @@ export default function StreamTab({ settings, pushToast, onDownload, onQuickDown
                 </button>
               </div>
             </div>
+          </div>
+        ) : null}
+
+        {session ? (
+          <div className="card stream-side" style={{ marginTop: 16 }}>
+            <div className="card-title" style={{ marginBottom: showTranscript ? 12 : 0 }}>
+              <div className="segmented">
+                <button type="button" className={showTranscript && sideTab === 'transcript' ? 'active' : ''} onClick={() => { setShowTranscript(!(showTranscript && sideTab === 'transcript')); setSideTab('transcript') }}>
+                  <Captions size={13} />Transcript
+                </button>
+                <button type="button" className={showTranscript && sideTab === 'moments' ? 'active' : ''} onClick={() => { setShowTranscript(!(showTranscript && sideTab === 'moments')); setSideTab('moments') }}>
+                  <StickyNote size={13} />Moments{videoMoments.length ? ' · ' + videoMoments.length : ''}
+                </button>
+              </div>
+              <span className="hint" style={{ fontWeight: 400 }}>
+                {showTranscript ? (sideTab === 'transcript' ? 'Follows the video. Click a line to jump there.' : 'Your bookmarks in this video.') : 'Read along, search what is said, or bookmark moments (B).'}
+              </span>
+            </div>
+            {showTranscript && sideTab === 'transcript' ? (
+              <TranscriptView
+                transcript={transcript?.videoId === session.videoId ? transcript.data : null}
+                loading={!transcript || transcript.videoId !== session.videoId || transcript.loading}
+                error={transcript?.videoId === session.videoId ? transcript.error : null}
+                time={time}
+                onSeek={seek}
+                maxHeight={360}
+              />
+            ) : null}
+            {showTranscript && sideTab === 'moments' ? (
+              videoMoments.length ? (
+                <div className="moment-list">
+                  {videoMoments.map((m) => (
+                    <MomentRow key={m.id} moment={m} onOpen={(x) => seek(x.at)} autoFocus={focusMoment === m.id} active={Math.abs(time - m.at) < 2} />
+                  ))}
+                </div>
+              ) : (
+                <p className="hint" style={{ margin: 0 }}>No moments yet. Press <kbd>B</kbd> or <strong>Save moment</strong> while it plays.</p>
+              )
+            ) : null}
           </div>
         ) : null}
 
