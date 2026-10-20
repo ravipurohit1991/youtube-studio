@@ -13,6 +13,14 @@ A desktop app for Windows and macOS, plus apps for Android and iPhone, with an o
 
 ---
 
+## What's new in 2.2
+
+**Playlists play themselves.** Paste a playlist into the Stream tab (or press **Play all** on Home) and it plays one
+video after another, ad-free, with an **up-next list**, **previous / next**, **shuffle**, **repeat** and **autoplay**.
+A link now gives you **only its own videos**: playlists listed inside it are shown separately instead of being pulled
+in all at once. On Android, **SponsorBlock now skips sponsors while you watch**. See the
+[release notes](.github/release-notes/v2.2.0.md).
+
 ## What's new in 2.1
 
 **Every word you saved is now searchable.** A new **[Moments](#moments-search-inside-your-videos)** tab finds any word
