@@ -274,6 +274,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val fresh = Engine.probe(saved.url)
+                // Followed before nested playlists stopped being expanded (a channel's tabs were saved, not
+                // its videos): take today's videos as the starting point instead of queueing the whole channel.
+                val videoId = Regex("^[\\w-]{11}$")
+                if (saved.knownIds.isNotEmpty() && saved.knownIds.none { videoId.matches(it) } &&
+                    fresh.entries.isNotEmpty() && fresh.entries.all { videoId.matches(it.id) }
+                ) {
+                    library.markSynced(saved.id, fresh.entries.map { it.id })
+                    message = "${saved.title} is up to date."
+                    return@launch
+                }
                 val added = fresh.entries.withIndex().filter { it.value.id !in saved.knownIds }
                 if (added.isNotEmpty()) {
                     store.addAll(added.map { (i, e) -> request(e, saved.folder, i + 1, saved.mode, saved.height, saved.audioFormat) })
