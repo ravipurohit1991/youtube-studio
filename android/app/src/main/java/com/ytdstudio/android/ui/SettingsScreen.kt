@@ -135,6 +135,9 @@ fun SettingsScreen(vm: MainViewModel, ai: AiViewModel) {
             Toggle("Picture-in-picture", "Leaving the player while a video plays keeps it in a small floating window.", settings.pictureInPicture) { on ->
                 set { it.copy(pictureInPicture = on) }
             }
+            Toggle("Skip sponsors while watching", "SponsorBlock jumps over sponsor reads, self-promotion and \"subscribe\" parts as they come, with an undo. Only a short hash prefix of the video id is sent.", settings.skipSponsorsLive) { on ->
+                set { it.copy(skipSponsorsLive = on) }
+            }
             Toggle("Background play for videos", "Keep the sound of a video going after you leave the player. Music always plays in the background.", settings.backgroundVideo) { on ->
                 set { it.copy(backgroundVideo = on) }
             }
