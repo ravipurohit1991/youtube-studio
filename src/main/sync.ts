@@ -9,6 +9,11 @@ import { probe } from './ytdlp'
 
 const running = new Set<string>()
 
+/** A YouTube video id (playlist, channel and tab ids are longer). */
+function isVideoId(id: string): boolean {
+  return /^[\w-]{11}$/.test(id)
+}
+
 /** Check a saved YouTube playlist (or channel) for videos added since the last sync and queue only those. */
 export async function syncSaved(id: string): Promise<SyncResult> {
   const saved = libraryState.get().saved.find((p) => p.id === id)
@@ -18,6 +23,13 @@ export async function syncSaved(id: string): Promise<SyncResult> {
   try {
     const meta = await probe(saved.url)
     const known = new Set(saved.knownIds)
+    // Followed before nested playlists stopped being expanded (a channel's tabs were saved, not its
+    // videos): take today's videos as the starting point instead of queueing the whole channel again.
+    if (saved.knownIds.length && !saved.knownIds.some(isVideoId) && meta.entries.length && meta.entries.every((entry) => isVideoId(entry.id))) {
+      log('sync: re-baselined', saved.title, meta.entries.length)
+      libraryState.markSynced(id, meta.entries.map((entry) => entry.id))
+      return { title: saved.title, added: 0 }
+    }
     const added = meta.entries
       .map((entry, index) => ({ entry, index }))
       .filter(({ entry }) => !!entry.id && !!entry.url && !known.has(entry.id))

@@ -51,6 +51,10 @@ object Engine {
     private const val TAG = "Engine"
     private const val PROGRESS_PREFIX = "@@P "
     private const val UPDATE_INTERVAL_MS = 12L * 60 * 60 * 1000
+    private val COLLECTION_LINK = Regex("[?&]list=|/playlist\\b|/@|/channel/|/c/|/user/", RegexOption.IGNORE_CASE)
+    private val VIDEO_LINK = Regex("[?&]v=|/shorts/", RegexOption.IGNORE_CASE)
+    private val VIDEOS_TAB = Regex("/videos/?$")
+    private val UNAVAILABLE_TITLE = Regex("\\[(private|deleted|unavailable) video\\]", RegexOption.IGNORE_CASE)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stateFlow = MutableStateFlow<State>(State.Preparing)
@@ -152,8 +156,28 @@ object Engine {
         }
         val json = text.lineSequence().map { it.trim() }.lastOrNull { it.startsWith("{") }
             ?: throw IllegalStateException("yt-dlp returned no data for that link.")
-        parseMeta(url, JSONObject(json))
+        val info = JSONObject(json)
+        val meta = parseMeta(url, info)
+        // A channel's home page lists its tabs (Videos, Shorts, Live) as playlists: open the Videos tab.
+        val videosTab = if (meta.isPlaylist && meta.entries.isEmpty()) {
+            info.optJSONArray("entries")?.objects().orEmpty()
+                .filter { isCollectionEntry(it) }
+                .mapNotNull { it.optStringOrNull("url") ?: it.optStringOrNull("webpage_url") }
+                .firstOrNull { VIDEOS_TAB.containsMatchIn(it) && it != url }
+        } else null
+        if (videosTab != null) probe(videosTab) else meta
     }
+
+    /** A flat entry that is itself a playlist, a channel or a channel tab: listed, never expanded. */
+    private fun isCollectionEntry(e: JSONObject): Boolean {
+        val type = e.optStringOrNull("_type")
+        if (type == "playlist" || type == "multi_video") return true
+        if (e.optStringOrNull("ie_key") == "YoutubeTab") return true
+        val link = e.optStringOrNull("url") ?: e.optStringOrNull("webpage_url") ?: ""
+        return COLLECTION_LINK.containsMatchIn(link) && !VIDEO_LINK.containsMatchIn(link)
+    }
+
+    private fun isUnavailable(e: JSONObject): Boolean = UNAVAILABLE_TITLE.matches(e.optStringOrNull("title") ?: "")
 
     /** The full yt-dlp info JSON for one video (captions, chapters, description...). */
     suspend fun infoJson(url: String): JSONObject = withContext(Dispatchers.IO) {
@@ -244,7 +268,8 @@ object Engine {
     private fun parseMeta(url: String, info: JSONObject): VideoMeta {
         val type = info.optStringOrNull("_type")
         if (type == "playlist" || type == "multi_video") {
-            val entries = info.optJSONArray("entries")?.objects().orEmpty().map { e ->
+            // Only the playlist's own videos: playlists nested in it are not expanded into theirs.
+            val entries = info.optJSONArray("entries")?.objects().orEmpty().filterNot { isCollectionEntry(it) || isUnavailable(it) }.map { e ->
                 val id = e.optStringOrNull("id") ?: ""
                 var entryUrl = e.optStringOrNull("webpage_url") ?: e.optStringOrNull("url") ?: id
                 if (!entryUrl.startsWith("http")) entryUrl = "https://www.youtube.com/watch?v=$entryUrl"

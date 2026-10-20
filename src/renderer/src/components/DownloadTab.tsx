@@ -134,7 +134,12 @@ export default function DownloadTab({
         setMeta(result)
         if (result.isPlaylist) {
           setSelected(new Set(result.entries.map((entry) => entry.id)))
-          pushToast('Playlist detected: ' + result.entryCount + ' videos.', 'info')
+          pushToast(
+            result.entryCount
+              ? 'Playlist detected: ' + result.entryCount + ' videos.' + (result.collections.length ? ' Playlists inside it are listed separately, not included.' : '')
+              : 'This link lists playlists, not videos: open one of them below.',
+            'info',
+          )
         } else {
           setSelected(new Set())
           setUrl(result.url)
@@ -522,6 +527,20 @@ export default function DownloadTab({
                 </div>
               </div>
             </details>
+
+            {meta.collections.length ? (
+              <div style={{ marginTop: 16 }}>
+                <div className="section-label">{meta.entries.length ? 'Also in this link (not included)' : 'Playlists in this link'}</div>
+                <div className="row tight">
+                  {meta.collections.map((c) => (
+                    <button key={c.url} type="button" className="btn small" onClick={() => { setUrl(c.url); void analyze(c.url) }} title={c.url}>
+                      <ListVideo size={14} />
+                      <span>{c.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {meta.isPlaylist ? (
               <div style={{ marginTop: 16 }}>

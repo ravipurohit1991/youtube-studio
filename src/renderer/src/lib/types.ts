@@ -14,6 +14,8 @@ export interface StreamDraft {
   startAt?: number
   /** Stream only the audio. */
   audioOnly?: boolean
+  /** A playlist link: shuffle it (true), play it in order (false), or keep the last choice (unset). */
+  shuffle?: boolean
   nonce: number
 }
 

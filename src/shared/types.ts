@@ -53,8 +53,11 @@ export interface VideoMeta {
   isLive: boolean
   isPlaylist: boolean
   playlistTitle: string | null
+  /** Videos of a playlist, in order (only its own: nested playlists are not expanded). */
   entryCount: number
   entries: PlaylistEntry[]
+  /** Playlists and channel tabs listed inside this link; open one to get its videos. */
+  collections: PlaylistEntry[]
   formats: FormatInfo[]
   heights: number[]
   subtitles: string[]

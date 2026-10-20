@@ -900,6 +900,13 @@ mark { background: rgba(var(--accent-rgb), 0.28); color: inherit; border-radius:
 .moment-group { margin: 0; }
 .card + .moment-group, .moment-group + .moment-group { margin-top: 0; }
 .stream-side .card-title { flex-wrap: wrap; }
+.stream-queue .card-title { flex-wrap: wrap; margin-bottom: 10px; }
+.stream-queue-title { min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stream-queue .upnext-list { position: relative; max-height: 340px; padding: 0; }
+.stream-queue .section-label { margin-top: 4px; }
+.stream-upnext { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upnext-index { width: 22px; flex: none; text-align: center; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.upnext-item.active .upnext-index { color: var(--accent); }
 
 /* ---------- Moments tab ---------- */
 .moments-hero {

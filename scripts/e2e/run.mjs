@@ -276,6 +276,41 @@ try {
   const upstream = readFileSync(serverLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
   check('media host saw only bounded ranges with client headers', upstream.length > 0 && upstream.every((r) => /^bytes=\d+-\d+$/.test(r.range) && r.check === 'visionos'))
 
+  // ---- Stream a playlist: only its own videos are queued, and the next one starts when one ends
+  await page.fill('input[placeholder="https://www.youtube.com/watch?v=..."]', 'https://www.youtube.com/playlist?list=PLtest123')
+  await page.press('input[placeholder="https://www.youtube.com/watch?v=..."]', 'Enter')
+  const queued = await page.waitForSelector('[data-tab="stream"] .stream-queue .upnext-item.active:has-text("Test Clip")', { timeout: 20000 }).then(() => true, () => false)
+  const queueRows = await page.$$eval('[data-tab="stream"] .stream-queue .upnext-name', (els) => els.map((e) => e.textContent))
+  console.log('  stream queue:', queueRows.join(' | '))
+  check('playlist streams as a queue of its own videos only', queued && queueRows.join() === 'Test Clip,Second Clip')
+  check('nested playlists are offered, not expanded', (await page.locator('[data-tab="stream"] .stream-queue button:has-text("Nested Playlist")').count()) === 1)
+  await page.waitForSelector('[data-tab="stream"] .stream-info h2:has-text("Test Clip")', { timeout: 20000 })
+  const firstSrc = await page.evaluate(async () => {
+    const v = document.querySelector('[data-tab="stream"] .video-frame video')
+    v.muted = true
+    const t0 = performance.now()
+    while (performance.now() - t0 < 8000 && v.readyState < 1) await new Promise((r) => setTimeout(r, 100))
+    // Let the next video preload (it starts 5 s in), then jump to the end.
+    await new Promise((r) => setTimeout(r, 6500))
+    v.currentTime = v.duration - 0.5
+    void v.play().catch(() => undefined)
+    return v.src
+  })
+  const advanced = await page.waitForSelector('[data-tab="stream"] .stream-info h2:has-text("Second Clip")', { timeout: 20000 }).then(() => true, () => false)
+  const second = await page.evaluate(async () => {
+    const v = document.querySelector('[data-tab="stream"] .video-frame video')
+    const t0 = performance.now()
+    while (performance.now() - t0 < 8000 && v.currentTime < 0.5) await new Promise((r) => setTimeout(r, 100))
+    return { src: v.src, t: v.currentTime, paused: v.paused }
+  })
+  check('autoplay: the next playlist video starts when one ends', advanced && second.src !== firstSrc && second.t >= 0.5 && !second.paused, 't=' + second.t.toFixed(1))
+  check('queue follows the playing video', (await page.locator('[data-tab="stream"] .stream-queue .upnext-item.active:has-text("Second Clip")').count()) === 1)
+  if (process.env.SHOT_DIR) await page.locator('[data-tab="stream"] .stream-queue').screenshot({ path: process.env.SHOT_DIR + '/stream-queue.png' })
+  await page.click('[data-tab="stream"] .stream-queue .upnext-item:has-text("Test Clip")')
+  const jumpedBack = await page.waitForSelector('[data-tab="stream"] .stream-info h2:has-text("Test Clip")', { timeout: 20000 }).then(() => true, () => false)
+  check('clicking a queue item plays it', jumpedBack)
+  await page.evaluate(() => document.querySelector('[data-tab="stream"] .video-frame video').pause())
+
   // ---- Whole playlist: one click, own folder, playlist order, kept in sync
   await page.click('button.nav-item:has-text("Download")')
   await page.fill('input[placeholder^="https://www.youtube.com/watch?v=... or"]', 'https://www.youtube.com/playlist?list=PLtest123')
@@ -469,6 +504,15 @@ try {
     return null
   }
   await page.click('button.nav-item:has-text("Home")')
+  await page.fill('.link-bar input', 'https://www.youtube.com/playlist?list=PLtest123')
+  await page.click('.link-bar button[type="submit"]')
+  const plCard = await page.waitForSelector('.quick-card h3:has-text("Test Playlist")', { timeout: 20000 }).then(() => true, () => false)
+  check(
+    'Home: a playlist offers Play all / Shuffle and lists nested playlists apart',
+    plCard && (await page.locator('.quick-card button:has-text("Play all")').count()) === 1 && (await page.locator('.quick-card button:has-text("Shuffle")').count()) === 1 &&
+      (await page.locator('.quick-card button:has-text("as video")').count()) === 1 && (await page.locator('.quick-card button:has-text("Nested Playlist")').count()) === 1,
+  )
+  if (process.env.SHOT_DIR) await page.screenshot({ path: process.env.SHOT_DIR + '/home-playlist.png' })
   await page.fill('.link-bar input', 'https://www.youtube.com/watch?v=abc123def45')
   await page.click('.link-bar button[type="submit"]')
   const quick = await page.waitForSelector('.quick-card h3:has-text("Test Clip")', { timeout: 20000 }).then(() => true, () => false)

@@ -19,6 +19,7 @@ import {
   MousePointerClick,
   Music,
   Play,
+  Shuffle,
   SlidersHorizontal,
   Sparkles,
   X,
@@ -43,7 +44,7 @@ interface Props {
   pushToast: PushToast
   onTab: (tab: TabId) => void
   onPlay: (list: LibraryItem[], index: number, shuffle?: boolean) => void
-  onStream: (url: string, startAt?: number, audioOnly?: boolean) => void
+  onStream: (url: string, startAt?: number, audioOnly?: boolean, shuffle?: boolean) => void
   onDownloadOptions: (url: string, mode: DownloadMode) => void
 }
 
@@ -256,26 +257,47 @@ export default function HomeTab({ settings, jobs, library, libState, aiStatus, y
                 {meta.viewCount ? <span className="chip">{formatCount(meta.viewCount)} views</span> : null}
                 {meta.isLive ? <span className="chip warn">live</span> : null}
               </div>
-              {meta.isPlaylist ? (
+              {meta.isPlaylist && meta.entries.length ? (
                 <>
                   <div className="quick-actions">
-                    <button type="button" className="btn primary large" disabled={!ytdlpReady} onClick={() => void queue('video_audio')}>
-                      <Download size={16} />
-                      <span>Get all {meta.entries.length} as video</span>
+                    <button type="button" className="btn gradient large" onClick={() => onStream(url || meta.url, undefined, undefined, false)} title="Stream the videos one after another, ad-free">
+                      <Play size={16} fill="currentColor" />
+                      <span>Play all</span>
                     </button>
-                    <button type="button" className="btn large" disabled={!ytdlpReady} onClick={() => void queue('audio_only')}>
-                      <Music size={16} />
-                      <span>All as {settings.audioFormat.toUpperCase()}</span>
+                    <button type="button" className="btn large" onClick={() => onStream(url || meta.url, undefined, undefined, true)}>
+                      <Shuffle size={16} />
+                      <span>Shuffle</span>
                     </button>
-                    <button type="button" className="btn ghost large" onClick={() => onDownloadOptions(meta.url, settings.defaultMode)}>
-                      <SlidersHorizontal size={16} />
-                      <span>Choose videos…</span>
+                    <button type="button" className="btn large" onClick={() => onStream(url || meta.url, undefined, true, false)} title="Stream only the audio, one after another">
+                      <Headphones size={16} />
+                      <span>Listen</span>
                     </button>
+                  </div>
+                  <div className="quick-group">
+                    <div className="section-label">Save it</div>
+                    <div className="row tight">
+                      <button type="button" className="btn primary" disabled={!ytdlpReady} onClick={() => void queue('video_audio')}>
+                        <Download size={15} />
+                        <span>All {meta.entries.length} as video</span>
+                      </button>
+                      <button type="button" className="btn" disabled={!ytdlpReady} onClick={() => void queue('audio_only')}>
+                        <Music size={15} />
+                        <span>All as {settings.audioFormat.toUpperCase()}</span>
+                      </button>
+                      <button type="button" className="btn ghost" onClick={() => onDownloadOptions(meta.url, settings.defaultMode)}>
+                        <SlidersHorizontal size={15} />
+                        <span>Choose videos…</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="row" style={{ marginTop: 14 }}>
                     <Switch checked={keepSynced} onChange={setKeepSynced} label="Follow it: Sync later fetches only new uploads" />
                   </div>
                 </>
+              ) : meta.isPlaylist ? (
+                <p className="hint" style={{ marginTop: 12 }}>
+                  {meta.collections.length ? 'This link lists playlists rather than videos. Open one below.' : 'No videos that can be played or saved were found here.'}
+                </p>
               ) : (
                 <>
                   <div className="quick-actions">
@@ -309,6 +331,19 @@ export default function HomeTab({ settings, jobs, library, libState, aiStatus, y
                   </div>
                 </>
               )}
+              {meta.collections.length ? (
+                <div className="quick-group">
+                  <div className="section-label">{meta.entries.length ? 'Also in this link (not included above)' : 'Playlists in this link'}</div>
+                  <div className="row tight">
+                    {meta.collections.map((c) => (
+                      <button key={c.url} type="button" className="btn small" onClick={() => void look(c.url)} title={c.url}>
+                        <ListVideo size={14} />
+                        <span>{c.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}

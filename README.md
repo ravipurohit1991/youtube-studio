@@ -59,7 +59,8 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 **Get things in**
 
 - **One link bar for everything** (Home): paste a video, a playlist or a channel and get the obvious actions:
-  *Watch now*, *Listen*, *Video* (with its size) or *Audio* in one click, or every option.
+  *Watch now*, *Listen*, *Video* (with its size) or *Audio* in one click, or every option. A playlist gets
+  *Play all*, *Shuffle* and *Listen*.
 - **Paste anywhere** (Ctrl+V outside a text field), **drop a link** on the window, or let the app **offer a link you
   just copied** when you come back to it. On Android, **Share** from the YouTube app.
 - **Command palette** (Ctrl+K): jump to any screen, pause or resume everything, retry failures, switch theme or
@@ -92,6 +93,13 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 **Watch and organize**
 
 - **Stream** ad-free inside the app, with **picture-in-picture**, **theater mode** and **recently streamed**.
+- **Stream whole playlists**: paste a playlist (or a video inside one) and it plays one video after another,
+  with an up-next list, previous / next, shuffle, repeat and an autoplay switch. It keeps going while you use
+  other tabs, the next video is fetched ahead so it starts right away, unavailable videos are skipped, and the
+  keyboard's media keys step through it.
+- **Only the playlist you pasted**: a playlist, channel page or page of playlists gives you its own videos.
+  Playlists listed inside it (a channel's Shorts and Live tabs, a "Playlists" page) are shown as separate
+  links to open, never pulled in all at once.
 - **SponsorBlock while watching**: sponsor reads, self-promotion and "like and subscribe" parts are skipped as they
   come, with an undo (privacy-preserving hash-prefix lookups).
 - A **player** with up next, autoplay, shuffle, repeat, speed, **subtitles**, picture-in-picture, a
@@ -130,6 +138,7 @@ a native **[iPhone and iPad app](#iphone-and-ipad-app)**, and a new app icon. Se
 | <kbd>C</kbd>, <kbd>I</kbd>, <kbd>F</kbd> | Player: subtitles, picture-in-picture, fullscreen |
 | <kbd>N</kbd> / <kbd>P</kbd>, <kbd>?</kbd> | Player: next / previous, all shortcuts |
 | <kbd>B</kbd> | Player and Stream: save this moment |
+| <kbd>Shift</kbd>+<kbd>N</kbd> / <kbd>Shift</kbd>+<kbd>P</kbd> | Stream: next / previous video of a playlist |
 | <kbd>[</kbd> / <kbd>]</kbd>, <kbd>\</kbd> | Player: loop from here / to here, stop looping |
 | <kbd>S</kbd>, <kbd>T</kbd> | Player: snapshot of the frame, show the transcript |
 
@@ -408,7 +417,7 @@ node scripts/smoke.mjs
 | Video download says it needs ffmpeg, or audio is M4A instead of MP3 | Click **Install ffmpeg** (banner or Settings > Tools). |
 | Stream shows video but it is capped at 360p/720p | Normal for some videos; downloads still get full quality (with ffmpeg). |
 | Age-restricted or private video fails | Settings > **Browser cookies** > pick your browser. |
-| A playlist only queues some videos | Use **Download whole playlist**, or tick the videos you want and use **Download N selected**. Up to 2000 entries are read. |
+| A playlist only queues some videos | Use **Download whole playlist**, or tick the videos you want and use **Download N selected**. Up to 2000 entries are read. Playlists nested inside a link are listed under *Also in this link*; open one to get its videos. |
 | A synced playlist re-downloads nothing new | Sync only fetches videos that were not in the playlist when it was saved or last synced. Videos you unticked then are skipped on purpose. |
 | Port 47821 busy | The app automatically falls back to a random free port. |
 | AI: "rejected the request (401)" | The API key is wrong or revoked. Settings > AI > **Replace** and paste a new one. |
