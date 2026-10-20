@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -73,8 +75,15 @@ import androidx.media3.ui.PlayerView
 import com.google.common.util.concurrent.ListenableFuture
 import com.ytdstudio.android.YtdApp
 import com.ytdstudio.android.engine.Engine
+import com.ytdstudio.android.engine.SkipSegment
+import com.ytdstudio.android.engine.SponsorBlock
 import com.ytdstudio.android.service.PlaybackService
 import java.lang.ref.WeakReference
+import kotlin.math.abs
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Full-screen player for downloaded files (offline, one or a whole queue) and for streams resolved
@@ -114,6 +123,23 @@ class PlayerActivity : ComponentActivity() {
             sleepHandler.postDelayed(this, 1000)
         }
     }
+    /** SponsorBlock while watching: segments of the playing YouTube video, checked a few times a second. */
+    private val scope = MainScope()
+    private var segments: List<SkipSegment> = emptyList()
+    private var segmentsJob: Job? = null
+    /** A stream follows YouTube's timeline; a downloaded file only when it is as long as the video. */
+    private var isStream = false
+    /** Segments the user chose to watch after all (undo), by start. */
+    private val allowed = mutableSetOf<Double>()
+    private var skipped by mutableStateOf<SkipSegment?>(null)
+    private val skipHandler = Handler(Looper.getMainLooper())
+    private val skipTick = object : Runnable {
+        override fun run() {
+            checkSkip()
+            skipHandler.postDelayed(this, 400)
+        }
+    }
+    private val hideSkipped = Runnable { skipped = null }
     /** Another player screen took over the session: leaving this one must not touch playback. */
     private var replaced = false
     private val app get() = application as YtdApp
@@ -125,6 +151,7 @@ class PlayerActivity : ComponentActivity() {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             currentMediaId = mediaItem?.mediaId
+            loadSegments()
             // "End of this item": the previous one finished on its own, so stop here.
             if (sleepAtEnd && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                 controller?.pause()
@@ -212,6 +239,20 @@ class PlayerActivity : ComponentActivity() {
                             }
                         }
                     }
+                    skipped?.takeIf { !inPip }?.let { s ->
+                        Row(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .navigationBarsPadding()
+                                .padding(end = 16.dp, bottom = 96.dp)
+                                .background(Color(0xCC000000), RoundedCornerShape(50))
+                                .padding(start = 16.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Skipped " + (SponsorBlock.LABELS[s.category] ?: s.category), color = Color.White, style = MaterialTheme.typography.labelLarge)
+                            TextButton(onClick = { undoSkip() }) { Text("Watch it") }
+                        }
+                    }
                     InsightsSheet()
                     if (sleepDialog) SleepDialog()
                 }
@@ -232,6 +273,7 @@ class PlayerActivity : ComponentActivity() {
             if (loadPayload) load(c, intent)
             c.currentMediaItem?.mediaMetadata?.title?.let { nowPlaying = it.toString() }
             currentMediaId = c.currentMediaItem?.mediaId
+            loadSegments()
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -295,6 +337,55 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun currentPageUrl(): String? = currentMediaId?.let { pageUrls[it] }
+
+    /** Ask SponsorBlock about the YouTube video now playing (if it is one, and the setting is on). */
+    private fun loadSegments() {
+        segmentsJob?.cancel()
+        segments = emptyList()
+        allowed.clear()
+        skipped = null
+        skipHandler.removeCallbacks(skipTick)
+        if (!app.prefs.settings.value.skipSponsorsLive) return
+        val mediaId = currentMediaId ?: return
+        val videoId = SponsorBlock.videoIdOf(pageUrls[mediaId]) ?: return
+        segmentsJob = scope.launch {
+            val found = SponsorBlock.segments(videoId)
+            if (currentMediaId != mediaId || found.isEmpty()) return@launch
+            segments = found
+            isStream = mediaId.startsWith(STREAM_PREFIX)
+            skipHandler.post(skipTick)
+        }
+    }
+
+    private fun checkSkip() {
+        val c = controller ?: return
+        if (segments.isEmpty() || !c.isPlaying || !onYouTubeTimeline(c)) return
+        val t = c.currentPosition / 1000.0
+        val hit = segments.firstOrNull { t >= it.start && t < it.end - 0.4 && it.start !in allowed } ?: return
+        val end = (hit.end * 1000).toLong()
+        c.seekTo(if (c.duration != C.TIME_UNSET && c.duration > 0) end.coerceAtMost(c.duration) else end)
+        skipped = hit
+        skipHandler.removeCallbacks(hideSkipped)
+        skipHandler.postDelayed(hideSkipped, 7000)
+    }
+
+    /** A download with sponsors already cut out (or a clip) no longer matches YouTube's timeline. */
+    private fun onYouTubeTimeline(c: MediaController): Boolean {
+        if (isStream) return true
+        if (c.duration == C.TIME_UNSET || c.duration <= 0) return false
+        val seconds = c.duration / 1000.0
+        return segments.any { it.videoDuration > 0 && abs(seconds - it.videoDuration) < 3 }
+    }
+
+    private fun undoSkip() {
+        val s = skipped ?: return
+        allowed.add(s.start)
+        controller?.let {
+            it.seekTo((s.start * 1000).toLong())
+            it.play()
+        }
+        skipped = null
+    }
 
     @androidx.compose.runtime.Composable
     private fun SleepDialog() {
@@ -416,6 +507,8 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         sleepHandler.removeCallbacks(sleepTick)
+        skipHandler.removeCallbacksAndMessages(null)
+        scope.cancel()
         val c = controller
         if (isFinishing && !replaced && c != null && showsVideo() && !app.prefs.settings.value.backgroundVideo) {
             c.stop()
@@ -444,7 +537,9 @@ class PlayerActivity : ComponentActivity() {
         private const val EXTRA_VIDEO_IDS = "videoIds"
         private const val EXTRA_START_MS = "startMs"
 
-        private fun streamMediaId(primary: String) = "stream:" + primary.hashCode()
+        private const val STREAM_PREFIX = "stream:"
+
+        private fun streamMediaId(primary: String) = STREAM_PREFIX + primary.hashCode()
 
         private var active: WeakReference<PlayerActivity>? = null
 

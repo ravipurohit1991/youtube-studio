@@ -36,6 +36,8 @@ data class Settings(
     val rateLimit: String = "",
     /** Cut sponsor segments out of downloads by default (SponsorBlock). */
     val sponsorBlock: Boolean = false,
+    /** Jump over sponsor, self-promotion and "subscribe" parts while watching (SponsorBlock). */
+    val skipSponsorsLive: Boolean = true,
     /** Embed tags and chapters into downloaded files (cover art is always embedded for audio). */
     val embedMetadata: Boolean = true,
     /** Sync followed playlists and channels when the app opens, if the last sync is older than this (0 = off). */
@@ -82,6 +84,7 @@ class Prefs(context: Context) {
             videoCodec = sp.getString("videoCodec", d.videoCodec)!!.takeIf { it == "compatible" || it == "best" } ?: d.videoCodec,
             rateLimit = sp.getString("rateLimit", d.rateLimit)!!.takeIf { it in RATE_LIMITS } ?: d.rateLimit,
             sponsorBlock = sp.getBoolean("sponsorBlock", d.sponsorBlock),
+            skipSponsorsLive = sp.getBoolean("skipSponsorsLive", d.skipSponsorsLive),
             embedMetadata = sp.getBoolean("embedMetadata", d.embedMetadata),
             autoSyncHours = sp.getInt("autoSyncHours", d.autoSyncHours).takeIf { it in SYNC_HOURS } ?: 0,
             aiHost = sp.getString("aiHost", d.aiHost)!!.trim().trimEnd('/').ifEmpty { d.aiHost },
@@ -109,6 +112,7 @@ class Prefs(context: Context) {
             .putString("videoCodec", next.videoCodec)
             .putString("rateLimit", next.rateLimit)
             .putBoolean("sponsorBlock", next.sponsorBlock)
+            .putBoolean("skipSponsorsLive", next.skipSponsorsLive)
             .putBoolean("embedMetadata", next.embedMetadata)
             .putInt("autoSyncHours", next.autoSyncHours)
             .putString("aiHost", next.aiHost)
@@ -127,7 +131,7 @@ class Prefs(context: Context) {
             .put("autoUpdateYtdlp", s.autoUpdateYtdlp).put("concurrentDownloads", s.concurrentDownloads).put("playlistFolders", s.playlistFolders)
             .put("themeMode", s.themeMode.name).put("dynamicColor", s.dynamicColor).put("accent", s.accent)
             .put("resumePlayback", s.resumePlayback).put("backgroundVideo", s.backgroundVideo).put("pictureInPicture", s.pictureInPicture)
-            .put("videoCodec", s.videoCodec).put("rateLimit", s.rateLimit).put("sponsorBlock", s.sponsorBlock).put("embedMetadata", s.embedMetadata)
+            .put("videoCodec", s.videoCodec).put("rateLimit", s.rateLimit).put("sponsorBlock", s.sponsorBlock).put("skipSponsorsLive", s.skipSponsorsLive).put("embedMetadata", s.embedMetadata)
             .put("autoSyncHours", s.autoSyncHours).put("aiHost", s.aiHost).put("aiModel", s.aiModel)
             .put("aiPersonalize", s.aiPersonalize).put("aiUseWeb", s.aiUseWeb)
     }
