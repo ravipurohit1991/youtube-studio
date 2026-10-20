@@ -66,15 +66,26 @@ if '-J' in args and 'list=' in url:
     if os.path.exists(os.path.join(here, 'playlist-extra')): ids.append('ghi789jkl01')
     entries = [{'id': i, 'title': TITLES[i], 'url': 'https://www.youtube.com/watch?v=' + i, 'duration': 20,
                 'thumbnails': [{'url': 'https://i.ytimg.com/vi/%s/hqdefault.jpg' % i}]} for i in ids]
+    # A playlist nested inside this one and a private video: neither may turn into downloads or queue items.
+    entries.insert(1, {'_type': 'url', 'ie_key': 'YoutubeTab', 'id': 'PLnested', 'title': 'Nested Playlist',
+                       'url': 'https://www.youtube.com/playlist?list=PLnested'})
+    entries.insert(2, {'_type': 'url', 'ie_key': 'Youtube', 'id': 'prvprvprv12', 'title': '[Private video]',
+                       'url': 'https://www.youtube.com/watch?v=prvprvprv12'})
     print(json.dumps({'_type': 'playlist', 'id': 'PLtest123', 'title': 'Test Playlist', 'uploader': 'Tester',
                       'entries': entries, 'extractor_key': 'YoutubeTab'})); sys.exit(0)
+# The other playlist videos answer with their own id and title (same media).
+ONE = dict(INFO)
+vid_arg = url.split('v=')[-1] if 'v=' in url else None
+if vid_arg in TITLES and vid_arg != INFO['id']:
+    ONE.update({'id': vid_arg, 'title': TITLES[vid_arg], 'webpage_url': 'https://www.youtube.com/watch?v=' + vid_arg,
+                'thumbnail': 'https://i.ytimg.com/vi/%s/hqdefault.jpg' % vid_arg})
 if '-J' in args:
-    print(json.dumps(INFO)); sys.exit(0)
+    print(json.dumps(ONE)); sys.exit(0)
 if '-j' in args:
     sel = opt('-f')
     ids = sel.split('+')
     picked = [f for i in ids for f in FORMATS if f['format_id'] == i]
-    out = dict(INFO)
+    out = dict(ONE)
     if len(picked) > 1: out['requested_formats'] = picked
     else: out.update(picked[0])
     print(json.dumps(out)); sys.exit(0)

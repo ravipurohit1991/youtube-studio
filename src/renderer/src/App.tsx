@@ -436,8 +436,8 @@ export default function App(): ReactNode {
     changeTab('download')
   }, [changeTab])
 
-  const playInStream = useCallback((url: string, startAt?: number, audioOnly?: boolean) => {
-    setStreamDraft({ url, startAt, audioOnly, nonce: Date.now() })
+  const playInStream = useCallback((url: string, startAt?: number, audioOnly?: boolean, shuffle?: boolean) => {
+    setStreamDraft({ url, startAt, audioOnly, shuffle, nonce: Date.now() })
     changeTab('stream')
   }, [changeTab])
 
@@ -737,7 +737,9 @@ export default function App(): ReactNode {
       const list: PaletteCommand[] = [
         { id: 'link-open', group: 'This link', label: collection ? 'Open this playlist or channel' : 'Show options for this link', icon: <Link2 size={16} />, run: () => openOnHome(url) },
       ]
-      if (!collection) {
+      if (collection) {
+        list.push({ id: 'link-watch', group: 'This link', label: 'Play it, one video after another', icon: <Play size={16} />, run: () => playInStream(url) })
+      } else {
         list.push(
           { id: 'link-watch', group: 'This link', label: 'Watch it now', icon: <Play size={16} />, run: () => playInStream(url) },
           { id: 'link-video', group: 'This link', label: 'Download the video', icon: <Download size={16} />, run: () => void quickDownload(url, 'video_audio') },

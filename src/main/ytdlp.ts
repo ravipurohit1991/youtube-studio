@@ -491,25 +491,55 @@ export function buildFormatSelector(mode: 'video_audio' | 'audio_only', height: 
   )
 }
 
+/** A flat entry that is itself a playlist, a channel or a channel tab: listed, never expanded. */
+function isCollectionEntry(e: Record<string, unknown>): boolean {
+  const type = str(e._type)
+  if (type === 'playlist' || type === 'multi_video') return true
+  if (str(e.ie_key) === 'YoutubeTab') return true
+  const link = str(e.url) ?? str(e.webpage_url) ?? ''
+  return /[?&]list=|\/playlist\b|\/@|\/channel\/|\/c\/|\/user\//i.test(link) && !/[?&]v=|\/shorts\//i.test(link)
+}
+
+function isUnavailable(e: Record<string, unknown>): boolean {
+  return /^\[(private|deleted|unavailable) video\]$/i.test(str(e.title) ?? '')
+}
+
+function toEntry(e: Record<string, unknown>): PlaylistEntry {
+  const id = str(e.id) ?? ''
+  let entryUrl = str(e.webpage_url) ?? str(e.url) ?? ''
+  if (entryUrl && entryUrl.indexOf('http') !== 0) entryUrl = 'https://www.youtube.com/watch?v=' + entryUrl
+  return {
+    id: id,
+    title: str(e.title) ?? id,
+    url: entryUrl,
+    duration: num(e.duration),
+    thumbnail: thumbOf(e),
+    uploader: str(e.uploader) ?? str(e.channel),
+  }
+}
+
+/**
+ * Metadata for a link. A playlist lists only its own videos: playlists nested inside it (a channel's
+ * tabs, a page of playlists) go to `collections` and are not expanded, so one link never turns into
+ * every video of every playlist it points at.
+ */
 export async function probe(url: string): Promise<VideoMeta> {
   const args = [...baseArgs(), '--no-progress', '--no-warnings', '-J', '--flat-playlist', '--playlist-end', '2000', '--', url]
   const info = await runJson(args, 90000)
   const type = str(info._type)
   if (type === 'playlist' || type === 'multi_video') {
-    const rawEntries = Array.isArray(info.entries) ? (info.entries as Record<string, unknown>[]) : []
-    const entries: PlaylistEntry[] = rawEntries.filter(Boolean).map(function (e) {
-      const id = str(e.id) ?? ''
-      let entryUrl = str(e.webpage_url) ?? str(e.url) ?? ''
-      if (entryUrl && entryUrl.indexOf('http') !== 0) entryUrl = 'https://www.youtube.com/watch?v=' + entryUrl
-      return {
-        id: id,
-        title: str(e.title) ?? id,
-        url: entryUrl,
-        duration: num(e.duration),
-        thumbnail: thumbOf(e),
-        uploader: str(e.uploader) ?? str(e.channel),
+    const rawEntries = (Array.isArray(info.entries) ? (info.entries as Record<string, unknown>[]) : []).filter(Boolean)
+    const entries = rawEntries.filter(function (e) { return !isCollectionEntry(e) && !isUnavailable(e) }).map(toEntry)
+    const collections = rawEntries.filter(isCollectionEntry).map(toEntry).filter(function (c) { return !!c.url })
+    // A channel's home page lists its tabs (Videos, Shorts, Live) as playlists: open the Videos tab.
+    const videosTab = entries.length ? null : collections.find(function (c) { return /\/videos\/?$/.test(c.url) && c.url !== url })
+    if (videosTab) {
+      const tab = await probe(videosTab.url)
+      if (tab.isPlaylist) {
+        const others = collections.filter(function (c) { return c !== videosTab })
+        return { ...tab, collections: others.concat(tab.collections) }
       }
-    })
+    }
     return {
       id: str(info.id) ?? '',
       url,
@@ -523,8 +553,9 @@ export async function probe(url: string): Promise<VideoMeta> {
       isLive: false,
       isPlaylist: true,
       playlistTitle: str(info.title),
-      entryCount: rawEntries.length,
+      entryCount: entries.length,
       entries,
+      collections,
       formats: [],
       heights: [],
       subtitles: [],
@@ -555,6 +586,7 @@ export async function probe(url: string): Promise<VideoMeta> {
     playlistTitle: null,
     entryCount: 1,
     entries: [],
+    collections: [],
     formats,
     heights,
     subtitles: subs,

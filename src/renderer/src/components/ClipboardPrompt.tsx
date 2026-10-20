@@ -38,10 +38,16 @@ export default function ClipboardPrompt({ url, onWatch, onDownload, onOpen, onDi
         <div className="clip-title" title={url}>{title ?? url.replace(/^https?:\/\/(www\.)?/, '')}</div>
       </div>
       {collection ? (
-        <button type="button" className="btn small primary" onClick={onOpen}>
-          <SlidersHorizontal size={14} />
-          <span>Open</span>
-        </button>
+        <>
+          <button type="button" className="btn small primary" onClick={onWatch} title="Play the videos one after another">
+            <Play size={14} />
+            <span>Play</span>
+          </button>
+          <button type="button" className="btn small" onClick={onOpen}>
+            <SlidersHorizontal size={14} />
+            <span>Open</span>
+          </button>
+        </>
       ) : (
         <>
           <button type="button" className="btn small primary" onClick={onWatch}>
